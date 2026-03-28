@@ -226,7 +226,8 @@ def show_admin_panel():
             st.metric("👥 Agents actifs", agents)
             
             derniere = conn.execute(text("SELECT MAX(date_tournee) FROM tournees WHERE statut = 'termine'")).scalar()
-            st.metric("📅 Dernière collecte", derniere or "Aucune")
+            derniere_str = derniere.strftime("%d/%m/%Y") if derniere else "Aucune"
+            st.metric("📅 Dernière collecte", derniere_str)
         
         col1, col2 = st.columns(2)
         
@@ -310,6 +311,9 @@ def show_admin_panel():
             """, conn)
             
             if not agents_df.empty:
+                # Convertir la date pour l'affichage
+                agents_df['derniere_activite'] = pd.to_datetime(agents_df['derniere_activite']).dt.strftime('%d/%m/%Y')
+                
                 agents_df.columns = ['Agent', 'Nb collectes', 'Volume total (m³)', 'Volume moyen (m³)', 'Distance totale (km)', 'Dernière activité']
                 st.dataframe(agents_df, use_container_width=True)
                 
@@ -335,7 +339,7 @@ def show_admin_panel():
             else:
                 st.info("Aucun agent enregistré")
     
-    # ==================== TAB 3 : GESTION DES QUARTIERS (CORRIGÉ EN m³) ====================
+    # ==================== TAB 3 : GESTION DES QUARTIERS ====================
     with tab3:
         st.subheader("🏘️ Performance par quartier")
         
@@ -356,10 +360,8 @@ def show_admin_panel():
             """, conn)
             
             if not quartiers_df.empty:
-                # Calcul m³ par habitant (volume par personne)
                 quartiers_df['m3_par_habitant'] = (quartiers_df['volume_total_m3'] / quartiers_df['population']).fillna(0)
                 
-                # Renommer les colonnes pour l'affichage
                 quartiers_df_display = quartiers_df.copy()
                 quartiers_df_display.columns = [
                     'Quartier', 'Population', 'Nb collectes', 
