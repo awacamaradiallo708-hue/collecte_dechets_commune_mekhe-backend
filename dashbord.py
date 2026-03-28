@@ -173,13 +173,13 @@ def exporter_word(df, periode_type, periode_nom, stats):
         <h2>📈 Résumé général</h2>
         <table>
             <tr><th>Indicateur</th><th>Valeur</th></tr>
-            <tr><td>Nombre de tournées</td><td>{stats.get('nb_tournees', 0)}</td> </tr>
-            <tr><td>Volume total collecté</td><td>{stats.get('volume_total', 0):.1f} m³</td> </tr>
-            <tr><td>Distance totale parcourue</td><td>{stats.get('distance_total', 0):.1f} km</td> </tr>
-            <tr><td>Nombre de quartiers visités</td><td>{stats.get('nb_quartiers', 0)}</td> </tr>
-            <tr><td>Nombre d'agents actifs</td><td>{stats.get('nb_agents', 0)}</td> </tr>
-            <tr><td>Quartier le plus productif</td><td>{stats.get('top_quartier', 'N/A')}</td> </tr>
-         </table>
+            <tr><td>Nombre de tournées</td><td>{stats.get('nb_tournees', 0)}</td></tr>
+            <tr><td>Volume total collecté</td><td>{stats.get('volume_total', 0):.1f} m³</td></tr>
+            <tr><td>Distance totale parcourue</td><td>{stats.get('distance_total', 0):.1f} km</td></tr>
+            <tr><td>Nombre de quartiers visités</td><td>{stats.get('nb_quartiers', 0)}</td></tr>
+            <tr><td>Nombre d'agents actifs</td><td>{stats.get('nb_agents', 0)}</td></tr>
+            <tr><td>Quartier le plus productif</td><td>{stats.get('top_quartier', 'N/A')}</td></tr>
+        </table>
         
         <h2>🏘️ Répartition par quartier</h2>
         {df.groupby('quartier').agg({'volume_total': 'sum'}).sort_values('volume_total', ascending=False).to_html()}
@@ -300,9 +300,9 @@ def show_admin_panel():
                 SELECT 
                     agent_nom,
                     COUNT(*) as nb_collectes,
-                    SUM(volume_m3) as volume_total_m3,
-                    AVG(volume_m3) as volume_moyen_m3,
-                    SUM(distance_parcourue_km) as distance_totale_km,
+                    COALESCE(SUM(volume_m3), 0) as volume_total_m3,
+                    COALESCE(AVG(volume_m3), 0) as volume_moyen_m3,
+                    COALESCE(SUM(distance_parcourue_km), 0) as distance_totale_km,
                     MAX(date_tournee) as derniere_activite
                 FROM tournees 
                 WHERE statut = 'termine'
@@ -311,8 +311,8 @@ def show_admin_panel():
             """, conn)
             
             if not agents_df.empty:
-                # Convertir la date pour l'affichage
-                agents_df['derniere_activite'] = pd.to_datetime(agents_df['derniere_activite']).dt.strftime('%d/%m/%Y')
+                agents_df = agents_df.fillna(0)
+                agents_df['derniere_activite'] = pd.to_datetime(agents_df['derniere_activite']).dt.strftime('%d/%m/%Y') if not agents_df['derniere_activite'].isna().all() else "Aucune"
                 
                 agents_df.columns = ['Agent', 'Nb collectes', 'Volume total (m³)', 'Volume moyen (m³)', 'Distance totale (km)', 'Dernière activité']
                 st.dataframe(agents_df, use_container_width=True)
@@ -339,7 +339,7 @@ def show_admin_panel():
             else:
                 st.info("Aucun agent enregistré")
     
-    # ==================== TAB 3 : GESTION DES QUARTIERS ====================
+    # ==================== TAB 3 : GESTION DES QUARTIERS (CORRIGÉ) ====================
     with tab3:
         st.subheader("🏘️ Performance par quartier")
         
@@ -347,12 +347,12 @@ def show_admin_panel():
             quartiers_df = pd.read_sql("""
                 SELECT 
                     q.nom as quartier,
-                    q.population,
+                    COALESCE(q.population, 0) as population,
                     COUNT(t.id) as nb_collectes,
-                    SUM(t.volume_m3) as volume_total_m3,
-                    AVG(t.volume_m3) as volume_moyen_m3,
-                    SUM(t.distance_parcourue_km) as distance_totale_km,
-                    SUM(CASE WHEN t.volume_m3 > 0 THEN t.distance_parcourue_km / t.volume_m3 ELSE 0 END) / NULLIF(COUNT(t.id), 0) as efficacite_moyenne
+                    COALESCE(SUM(t.volume_m3), 0) as volume_total_m3,
+                    COALESCE(AVG(t.volume_m3), 0) as volume_moyen_m3,
+                    COALESCE(SUM(t.distance_parcourue_km), 0) as distance_totale_km,
+                    COALESCE(SUM(CASE WHEN t.volume_m3 > 0 THEN t.distance_parcourue_km / t.volume_m3 ELSE 0 END) / NULLIF(COUNT(t.id), 0), 0) as efficacite_moyenne
                 FROM quartiers q
                 LEFT JOIN tournees t ON q.id = t.quartier_id AND t.statut = 'termine'
                 GROUP BY q.nom, q.population
@@ -360,7 +360,13 @@ def show_admin_panel():
             """, conn)
             
             if not quartiers_df.empty:
-                quartiers_df['m3_par_habitant'] = (quartiers_df['volume_total_m3'] / quartiers_df['population']).fillna(0)
+                quartiers_df = quartiers_df.fillna(0)
+                quartiers_df['volume_total_m3'] = quartiers_df['volume_total_m3'].astype(float)
+                quartiers_df['population'] = quartiers_df['population'].astype(float)
+                
+                quartiers_df['m3_par_habitant'] = quartiers_df.apply(
+                    lambda row: row['volume_total_m3'] / row['population'] if row['population'] > 0 else 0, axis=1
+                )
                 
                 quartiers_df_display = quartiers_df.copy()
                 quartiers_df_display.columns = [
@@ -375,47 +381,59 @@ def show_admin_panel():
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    fig_volume = px.bar(
-                        quartiers_df.head(10), 
-                        x='quartier', 
-                        y='volume_total_m3',
-                        title="Top quartiers - Volume total collecté (m³)",
-                        labels={'quartier': 'Quartier', 'volume_total_m3': 'Volume (m³)'},
-                        color='volume_total_m3',
-                        color_continuous_scale='Viridis',
-                        text='volume_total_m3'
-                    )
-                    fig_volume.update_traces(texttemplate='%{text:.1f} m³', textposition='outside')
-                    st.plotly_chart(fig_volume, use_container_width=True)
+                    quartiers_filtres = quartiers_df[quartiers_df['volume_total_m3'] > 0].head(10)
+                    if not quartiers_filtres.empty:
+                        fig_volume = px.bar(
+                            quartiers_filtres, 
+                            x='quartier', 
+                            y='volume_total_m3',
+                            title="Top quartiers - Volume total collecté (m³)",
+                            labels={'quartier': 'Quartier', 'volume_total_m3': 'Volume (m³)'},
+                            color='volume_total_m3',
+                            color_continuous_scale='Viridis',
+                            text='volume_total_m3'
+                        )
+                        fig_volume.update_traces(texttemplate='%{text:.1f} m³', textposition='outside')
+                        st.plotly_chart(fig_volume, use_container_width=True)
+                    else:
+                        st.info("Aucune donnée de volume pour les quartiers")
                 
                 with col2:
-                    fig_habitant = px.bar(
-                        quartiers_df.head(10), 
-                        x='quartier', 
-                        y='m3_par_habitant',
-                        title="Volume collecté par habitant (m³/hab)",
-                        labels={'quartier': 'Quartier', 'm3_par_habitant': 'm³ par habitant'},
-                        color='m3_par_habitant',
-                        color_continuous_scale='Viridis',
-                        text='m3_par_habitant'
-                    )
-                    fig_habitant.update_traces(texttemplate='%{text:.3f} m³', textposition='outside')
-                    st.plotly_chart(fig_habitant, use_container_width=True)
+                    quartiers_filtres_hab = quartiers_df[quartiers_df['m3_par_habitant'] > 0].head(10)
+                    if not quartiers_filtres_hab.empty:
+                        fig_habitant = px.bar(
+                            quartiers_filtres_hab, 
+                            x='quartier', 
+                            y='m3_par_habitant',
+                            title="Volume collecté par habitant (m³/hab)",
+                            labels={'quartier': 'Quartier', 'm3_par_habitant': 'm³ par habitant'},
+                            color='m3_par_habitant',
+                            color_continuous_scale='Viridis',
+                            text='m3_par_habitant'
+                        )
+                        fig_habitant.update_traces(texttemplate='%{text:.3f} m³', textposition='outside')
+                        st.plotly_chart(fig_habitant, use_container_width=True)
+                    else:
+                        st.info("Aucune donnée de volume par habitant")
                 
                 st.subheader("📊 Relation Volume collecté vs Population")
-                fig_scatter = px.scatter(
-                    quartiers_df,
-                    x='population',
-                    y='volume_total_m3',
-                    size='volume_total_m3',
-                    text='quartier',
-                    title="Corrélation entre population et volume collecté",
-                    labels={'population': 'Population', 'volume_total_m3': 'Volume collecté (m³)'},
-                    color='volume_total_m3',
-                    color_continuous_scale='Viridis'
-                )
-                fig_scatter.update_traces(textposition='top center')
-                st.plotly_chart(fig_scatter, use_container_width=True)
+                quartiers_scatter = quartiers_df[(quartiers_df['population'] > 0) & (quartiers_df['volume_total_m3'] > 0)]
+                if not quartiers_scatter.empty:
+                    fig_scatter = px.scatter(
+                        quartiers_scatter,
+                        x='population',
+                        y='volume_total_m3',
+                        size='volume_total_m3',
+                        text='quartier',
+                        title="Corrélation entre population et volume collecté",
+                        labels={'population': 'Population', 'volume_total_m3': 'Volume collecté (m³)'},
+                        color='volume_total_m3',
+                        color_continuous_scale='Viridis'
+                    )
+                    fig_scatter.update_traces(textposition='top center')
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                else:
+                    st.info("Aucune donnée suffisante pour afficher la corrélation")
                 
                 csv = quartiers_df_display.to_csv(index=False).encode('utf-8')
                 st.download_button(
@@ -425,7 +443,7 @@ def show_admin_panel():
                     mime="text/csv"
                 )
             else:
-                st.info("Aucune donnée disponible")
+                st.info("Aucune donnée disponible pour les quartiers")
     
     # ==================== TAB 4 : EXPORTS ET SAUVEGARDE ====================
     with tab4:
