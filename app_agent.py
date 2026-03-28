@@ -139,18 +139,40 @@ def get_position():
     return {"lat": 15.115000, "lon": -16.635000, "accuracy": 10}
 
 # ==================== SESSION STATE ====================
+if 'agent_connecte' not in st.session_state:
+    st.session_state.agent_connecte = False
 if 'agent_nom' not in st.session_state:
     st.session_state.agent_nom = ""
 if 'tournee_id' not in st.session_state:
     st.session_state.tournee_id = None
-if 'collecte1_validee' not in st.session_state:
-    st.session_state.collecte1_validee = False
-if 'collecte2_validee' not in st.session_state:
-    st.session_state.collecte2_validee = False
+if 'etape' not in st.session_state:
+    st.session_state.etape = "accueil"
+if 'date_tournee' not in st.session_state:
+    st.session_state.date_tournee = date.today()
+if 'quartier_id' not in st.session_state:
+    st.session_state.quartier_id = None
+if 'quartier_nom' not in st.session_state:
+    st.session_state.quartier_nom = ""
+if 'equipe_id' not in st.session_state:
+    st.session_state.equipe_id = None
+if 'equipe_nom' not in st.session_state:
+    st.session_state.equipe_nom = ""
+if 'volume1' not in st.session_state:
+    st.session_state.volume1 = 0.0
+if 'volume2' not in st.session_state:
+    st.session_state.volume2 = 0.0
 if 'points_gps' not in st.session_state:
     st.session_state.points_gps = []
 if 'gps_actif' not in st.session_state:
     st.session_state.gps_actif = False
+if 'collecte1_validee' not in st.session_state:
+    st.session_state.collecte1_validee = False
+if 'collecte2_validee' not in st.session_state:
+    st.session_state.collecte2_validee = False
+if 'heure_depot_depart' not in st.session_state:
+    st.session_state.heure_depot_depart = time(7, 0)
+if 'heure_retour_depot' not in st.session_state:
+    st.session_state.heure_retour_depot = time(14, 45)
 
 # ==================== BARRE LATÉRALE - IDENTIFICATION ====================
 with st.sidebar:
@@ -175,6 +197,11 @@ with st.sidebar:
     else:
         st.warning("⏳ Collecte 2 en attente")
     
+    if st.session_state.volume1 > 0:
+        st.metric("📦 Volume Collecte 1", f"{st.session_state.volume1:.1f} m³")
+    if st.session_state.volume2 > 0:
+        st.metric("📦 Volume Collecte 2", f"{st.session_state.volume2:.1f} m³")
+    
     st.markdown("---")
     
     # Activation GPS
@@ -189,8 +216,10 @@ with st.sidebar:
 col1, col2 = st.columns(2)
 with col1:
     date_tournee = st.date_input("📅 Date", value=date.today())
+    st.session_state.date_tournee = date_tournee
 with col2:
     quartier_nom = st.selectbox("📍 Quartier", [q[1] for q in get_quartiers()])
+    st.session_state.quartier_nom = quartier_nom
 
 # ==================== COLLECTE 1 ====================
 st.markdown("---")
@@ -204,7 +233,8 @@ if not st.session_state.collecte1_validee:
     st.markdown("#### 🏭 1. DÉPART DU DÉPÔT")
     col1, col2 = st.columns(2)
     with col1:
-        heure_depot_depart = st.time_input("Heure de départ", value=time(7, 0), key="depart1")
+        heure_depot_depart = st.time_input("Heure de départ", value=st.session_state.heure_depot_depart, key="depart1")
+        st.session_state.heure_depot_depart = heure_depot_depart
     with col2:
         if st.button("📍 Enregistrer départ", key="btn_depart1"):
             pos = get_position()
@@ -265,22 +295,22 @@ if not st.session_state.collecte1_validee:
     col1, col2 = st.columns(2)
     with col1:
         heure_sortie_decharge1 = st.time_input("Heure sortie décharge", value=time(10, 45), key="sortie_decharge1")
-        volume1 = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume1")
+        volume1_input = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume1_input", value=st.session_state.volume1)
     with col2:
         if st.button("📍 Enregistrer sortie + Volume", key="btn_sortie1"):
             pos = get_position()
-            if volume1 > 0:
-                if enregistrer_point_gps(None, "sortie_decharge", f"Sortie décharge 1 - Volume: {volume1} m³", pos["lat"], pos["lon"], 1):
+            if volume1_input > 0:
+                if enregistrer_point_gps(None, "sortie_decharge", f"Sortie décharge 1 - Volume: {volume1_input} m³", pos["lat"], pos["lon"], 1):
                     st.session_state.points_gps.append({"type": "sortie_decharge", "lat": pos["lat"], "lon": pos["lon"], "collecte": 1})
-                    st.session_state.volume1 = volume1
-                    st.success(f"✅ Sortie décharge enregistrée - Volume: {volume1} m³")
+                    st.session_state.volume1 = volume1_input
+                    st.success(f"✅ Sortie décharge enregistrée - Volume: {volume1_input} m³")
             else:
                 st.warning("⚠️ Veuillez saisir le volume déchargé")
     
     # 7. Valider Collecte 1
     st.markdown("---")
     if st.button("✅ VALIDER LA COLLECTE 1", type="primary", use_container_width=True):
-        if volume1 > 0:
+        if st.session_state.volume1 > 0:
             st.session_state.collecte1_validee = True
             st.success("✅ Collecte 1 validée ! Passez à la Collecte 2")
             st.rerun()
@@ -289,6 +319,7 @@ if not st.session_state.collecte1_validee:
 
 else:
     st.success("✅ Collecte 1 terminée et validée")
+    st.write(f"📦 Volume déchargé: {st.session_state.volume1:.1f} m³")
     if st.button("📝 Modifier Collecte 1", use_container_width=True):
         st.session_state.collecte1_validee = False
         st.rerun()
@@ -354,15 +385,15 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
     col1, col2 = st.columns(2)
     with col1:
         heure_sortie_decharge2 = st.time_input("Heure sortie décharge 2", value=time(14, 15), key="sortie_decharge2")
-        volume2 = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume2")
+        volume2_input = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume2_input", value=st.session_state.volume2)
     with col2:
         if st.button("📍 Enregistrer sortie + Volume 2", key="btn_sortie2"):
             pos = get_position()
-            if volume2 > 0:
-                if enregistrer_point_gps(None, "sortie_decharge", f"Sortie décharge 2 - Volume: {volume2} m³", pos["lat"], pos["lon"], 2):
+            if volume2_input > 0:
+                if enregistrer_point_gps(None, "sortie_decharge", f"Sortie décharge 2 - Volume: {volume2_input} m³", pos["lat"], pos["lon"], 2):
                     st.session_state.points_gps.append({"type": "sortie_decharge", "lat": pos["lat"], "lon": pos["lon"], "collecte": 2})
-                    st.session_state.volume2 = volume2
-                    st.success(f"✅ Sortie décharge 2 enregistrée - Volume: {volume2} m³")
+                    st.session_state.volume2 = volume2_input
+                    st.success(f"✅ Sortie décharge 2 enregistrée - Volume: {volume2_input} m³")
             else:
                 st.warning("⚠️ Veuillez saisir le volume déchargé")
     
@@ -370,7 +401,8 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
     st.markdown("#### 🏁 6. RETOUR AU DÉPÔT")
     col1, col2 = st.columns(2)
     with col1:
-        heure_retour_depot = st.time_input("Heure retour dépôt", value=time(14, 45), key="retour")
+        heure_retour_depot = st.time_input("Heure retour dépôt", value=st.session_state.heure_retour_depot, key="retour")
+        st.session_state.heure_retour_depot = heure_retour_depot
     with col2:
         if st.button("📍 Enregistrer retour", key="btn_retour"):
             pos = get_position()
@@ -381,67 +413,81 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
     # 7. Valider Collecte 2
     st.markdown("---")
     if st.button("✅ VALIDER LA COLLECTE 2", type="primary", use_container_width=True):
-        if volume2 > 0:
+        if st.session_state.volume2 > 0:
             st.session_state.collecte2_validee = True
             st.success("✅ Collecte 2 validée ! Tournée terminée")
             
             # Enregistrer dans la base de données
-            quartier_id = get_quartier_id(quartier_nom)
-            equipe_id = get_equipe_id("Équipe A")  # À adapter
+            quartier_id = get_quartier_id(st.session_state.quartier_nom)
+            equipe_id = get_equipe_id("Équipe A")  # À adapter selon votre besoin
             
             if quartier_id and equipe_id:
-                with engine.connect() as conn:
-                    result = conn.execute(text("""
-                        INSERT INTO tournees (
-                            date_tournee, quartier_id, equipe_id, agent_nom,
-                            volume_collecte1, volume_collecte2, volume_m3,
-                            heure_depot_depart, heure_retour_depot, statut
-                        ) VALUES (
-                            :date, :qid, :eid, :agent,
-                            :vol1, :vol2, :vol_total,
-                            :depart, :retour, 'termine'
-                        )
-                        RETURNING id
-                    """), {
-                        "date": date_tournee,
-                        "qid": quartier_id,
-                        "eid": equipe_id,
-                        "agent": st.session_state.agent_nom,
-                        "vol1": st.session_state.volume1,
-                        "vol2": st.session_state.volume2,
-                        "vol_total": st.session_state.volume1 + st.session_state.volume2,
-                        "depart": heure_depot_depart.strftime("%H:%M:%S"),
-                        "retour": heure_retour_depot.strftime("%H:%M:%S")
-                    })
-                    tournee_id = result.fetchone()[0]
-                    
-                    # Enregistrer tous les points GPS
-                    for point in st.session_state.points_gps:
-                        conn.execute(text("""
-                            INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, collecte_numero)
-                            VALUES (:tid, :heure, :type, :lat, :lon, :collecte)
+                try:
+                    with engine.connect() as conn:
+                        result = conn.execute(text("""
+                            INSERT INTO tournees (
+                                date_tournee, quartier_id, equipe_id, agent_nom,
+                                volume_collecte1, volume_collecte2, volume_m3,
+                                heure_depot_depart, heure_retour_depot, statut
+                            ) VALUES (
+                                :date, :qid, :eid, :agent,
+                                :vol1, :vol2, :vol_total,
+                                :depart, :retour, 'termine'
+                            )
+                            RETURNING id
                         """), {
-                            "tid": tournee_id,
-                            "heure": datetime.now(),
-                            "type": point["type"],
-                            "lat": point["lat"],
-                            "lon": point["lon"],
-                            "collecte": point["collecte"]
+                            "date": st.session_state.date_tournee,
+                            "qid": quartier_id,
+                            "eid": equipe_id,
+                            "agent": st.session_state.agent_nom,
+                            "vol1": st.session_state.volume1,
+                            "vol2": st.session_state.volume2,
+                            "vol_total": st.session_state.volume1 + st.session_state.volume2,
+                            "depart": st.session_state.heure_depot_depart.strftime("%H:%M:%S"),
+                            "retour": st.session_state.heure_retour_depot.strftime("%H:%M:%S")
                         })
-                    conn.commit()
-                
-                st.balloons()
+                        tournee_id = result.fetchone()[0]
+                        
+                        # Enregistrer tous les points GPS
+                        for point in st.session_state.points_gps:
+                            conn.execute(text("""
+                                INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, collecte_numero)
+                                VALUES (:tid, :heure, :type, :lat, :lon, :collecte)
+                            """), {
+                                "tid": tournee_id,
+                                "heure": datetime.now(),
+                                "type": point["type"],
+                                "lat": point["lat"],
+                                "lon": point["lon"],
+                                "collecte": point["collecte"]
+                            })
+                        conn.commit()
+                    
+                    st.balloons()
+                    st.success("✅ Tournée enregistrée dans la base de données!")
+                except Exception as e:
+                    st.error(f"Erreur lors de l'enregistrement: {e}")
+            
             st.rerun()
         else:
             st.warning("⚠️ Veuillez enregistrer le volume déchargé")
 
 elif st.session_state.collecte2_validee:
     st.success("✅ Tournée complète terminée !")
-    if st.button("🔄 DÉMARRER UNE NOUVELLE TOURNÉE", use_container_width=True):
-        st.session_state.collecte1_validee = False
-        st.session_state.collecte2_validee = False
-        st.session_state.points_gps = []
-        st.rerun()
+    st.write(f"📦 Volume total déchargé: {st.session_state.volume1 + st.session_state.volume2:.1f} m³")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 DÉMARRER UNE NOUVELLE TOURNÉE", use_container_width=True):
+            st.session_state.collecte1_validee = False
+            st.session_state.collecte2_validee = False
+            st.session_state.points_gps = []
+            st.session_state.volume1 = 0.0
+            st.session_state.volume2 = 0.0
+            st.rerun()
+    with col2:
+        if st.button("📥 EXPORTER EN EXCEL", use_container_width=True):
+            st.info("Fonction d'export à venir")
 
 # ==================== CARTE INTERACTIVE ====================
 st.markdown("---")
@@ -462,14 +508,27 @@ if st.session_state.points_gps:
         "retour_depot": "brown"
     }
     
+    # Définir les noms des points
+    noms_points = {
+        "depart_depot": "🏭 Départ dépôt",
+        "debut_collecte": "🗑️ Début collecte",
+        "fin_collecte": "🗑️ Fin collecte",
+        "depart_decharge": "🚛 Départ décharge",
+        "arrivee_decharge": "🏭 Arrivée décharge",
+        "sortie_decharge": "🏭 Sortie décharge",
+        "retour_depot": "🏁 Retour dépôt"
+    }
+    
+    df_points["nom_affichage"] = df_points["type"].map(noms_points)
+    
     # Créer la carte
     fig = px.scatter_mapbox(
         df_points,
         lat="lat",
         lon="lon",
         color="type",
-        hover_name="type",
-        hover_data={"collecte": True},
+        hover_name="nom_affichage",
+        hover_data={"collecte": True, "type": False},
         color_discrete_map=couleurs,
         zoom=13,
         center={"lat": 15.11, "lon": -16.65},
@@ -482,8 +541,9 @@ if st.session_state.points_gps:
         fig.add_trace(go.Scattermapbox(
             lat=df_points["lat"].tolist(),
             lon=df_points["lon"].tolist(),
-            mode='lines',
-            line=dict(width=2, color='blue'),
+            mode='lines+markers',
+            line=dict(width=3, color='blue'),
+            marker=dict(size=8, color='blue'),
             name='Trajet',
             showlegend=True
         ))
@@ -506,13 +566,19 @@ if st.session_state.points_gps:
     🔴 Rouge - Arrivée décharge<br>
     🟣 Violet - Sortie décharge<br>
     🟤 Marron - Retour dépôt<br>
-    📏 Ligne bleue - Trajet effectué
+    🔵 Ligne bleue - Trajet effectué
     </div>
     """, unsafe_allow_html=True)
+    
+    # Afficher la liste des points
+    with st.expander("📋 Détail des points enregistrés"):
+        for i, point in enumerate(st.session_state.points_gps):
+            st.write(f"{i+1}. {noms_points.get(point['type'], point['type'])} - Collecte {point['collecte']}")
+            st.write(f"   📍 {point['lat']:.6f}, {point['lon']:.6f}")
     
 else:
     st.info("ℹ️ Aucun point GPS enregistré pour le moment. Utilisez les boutons 'Enregistrer' pendant votre tournée.")
 
 # ==================== FOOTER ====================
 st.markdown("---")
-st.caption(f"📱 Agent: {st.session_state.agent_nom or 'Non connecté'} | GPS: {'Actif' if st.session_state.gps_actif else 'Inactif'}")
+st.caption(f"📱 Agent: {st.session_state.agent_nom or 'Non connecté'} | GPS: {'Actif' if st.session_state.gps_actif else 'Inactif'} | Commune de Mékhé")
