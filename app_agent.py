@@ -6,182 +6,136 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import os
 from streamlit_js_eval import get_geolocation
+import io
 
-st.set_page_config(page_title="Agent Collecte - Mékhé", page_icon="🗑️", layout="wide")
+st.set_page_config(page_title="Suivi Collecte Mékhé", page_icon="🗑️", layout="wide")
 
-# ==================== STYLE CSS GÉANT ====================
+# ==================== STYLE CSS ====================
 st.markdown("""
     <style>
-    .main-header { background: linear-gradient(135deg, #2E7D32 0%, #1B5E20 100%); padding: 1.5rem; border-radius: 15px; color: white; text-align: center; margin-bottom: 1.5rem; }
-    .stButton button { width: 100%; padding: 20px !important; font-size: 22px !important; font-weight: bold !important; border-radius: 15px !important; }
-    .collecte-card { background: #e8f5e9; padding: 1.5rem; border-radius: 15px; border-left: 10px solid #4CAF50; margin-bottom: 1.5rem; }
-    .collecte2-card { background: #fff8e7; padding: 1.5rem; border-radius: 15px; border-left: 10px solid #FF9800; margin-bottom: 1.5rem; }
-    .option-card { background: #f0f2f6; padding: 1rem; border-radius: 15px; text-align: center; margin: 1rem 0; border: 2px dashed #999; }
-    label { font-size: 20px !important; font-weight: bold; }
+    .main-header { background: linear-gradient(135deg, #1e5128 0%, #4e944f 100%); padding: 2rem; border-radius: 15px; color: white; text-align: center; margin-bottom: 2rem; }
+    .stButton button { width: 100%; padding: 15px !important; font-size: 20px !important; font-weight: bold !important; border-radius: 12px !important; }
+    .card { background: #f8f9fa; padding: 1.5rem; border-radius: 15px; border-left: 8px solid #1e5128; margin-bottom: 1rem; }
+    label { font-size: 18px !important; font-weight: bold; color: #1e5128; }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header"><h1>🗑️ AGENT DE COLLECTE - MÉKHÉ</h1><p>Gestion flexible des tours de collecte</p></div>', unsafe_allow_html=True)
-
-# ==================== CONNEXION BDD ====================
+# ==================== CONNEXION & CONFIG ====================
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-# ==================== FONCTIONS GPS & SQL ====================
-def capturer_gps():
-    loc = get_geolocation()
-    if loc and 'coords' in loc:
-        return loc['coords']['latitude'], loc['coords']['longitude']
-    return None, None
-
-def enregistrer_point_sql(tournee_id, type_p, desc, col_num):
-    if not tournee_id:
-        st.error("❌ Cliquez d'abord sur 'DÉMARRER LA JOURNÉE'")
-        return
-    lat, lon = capturer_gps()
-    if lat and lon:
-        try:
-            with engine.connect() as conn:
-                conn.execute(text("""
-                    INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, description, collecte_numero)
-                    VALUES (:tid, :heure, :type, :lat, :lon, :desc, :col)
-                """), {"tid": tournee_id, "heure": datetime.now(), "type": type_p, "lat": lat, "lon": lon, "desc": desc, "col": col_num})
-                conn.commit()
-            st.session_state.points_gps.append({"lat": lat, "lon": lon, "type": type_p, "col": col_num})
-            st.success(f"📍 Position GPS enregistrée pour le tour {col_num} !")
-        except Exception as e:
-            st.error(f"Erreur SQL : {e}")
-
-# ==================== INITIALISATION ====================
 if 'points_gps' not in st.session_state: st.session_state.points_gps = []
 if 'tournee_id' not in st.session_state: st.session_state.tournee_id = None
 if 'show_c2' not in st.session_state: st.session_state.show_c2 = False
 
-# ==================== EN-TÊTE TOURNÉE ====================
-with st.container():
-    col1, col2 = st.columns(2)
-    with col1:
-        agent = st.text_input("👤 NOM DE L'AGENT", key="agent_nom")
-        date_j = st.date_input("📅 DATE", value=date.today())
-    with col2:
+# ==================== FONCTIONS ====================
+def enregistrer_gps_sql(tid, type_p, desc, col_num):
+    loc = get_geolocation()
+    if loc and 'coords' in loc:
+        lat, lon = loc['coords']['latitude'], loc['coords']['longitude']
         try:
             with engine.connect() as conn:
-                q_list = conn.execute(text("SELECT id, nom FROM quartiers WHERE actif = true")).fetchall()
-                quartiers = {r[1]: r[0] for r in q_list}
-            quartier_sel = st.selectbox("🏘️ QUARTIER", list(quartiers.keys()) if quartiers else ["Centre"])
-        except:
-            quartier_sel = st.selectbox("🏘️ QUARTIER", ["Mékhé Centre"])
-        dist_km = st.number_input("📏 KM COMPTEUR FINAL", min_value=0.0)
+                conn.execute(text("""
+                    INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, description, collecte_numero)
+                    VALUES (:tid, :h, :t, :lat, :lon, :d, :c)
+                """), {"tid": tid, "h": datetime.now(), "t": type_p, "lat": lat, "lon": lon, "d": desc, "c": col_num})
+                conn.commit()
+            st.session_state.points_gps.append({"Heure": datetime.now().strftime("%H:%M"), "Type": desc, "lat": lat, "lon": lon, "Tour": col_num})
+            st.success(f"📍 Point enregistré : {desc}")
+        except Exception as e: st.error(f"Erreur BDD : {e}")
+    else:
+        st.warning("Veuillez activer le GPS sur votre téléphone.")
 
-if st.button("🚀 DÉMARRER LA JOURNÉE / CRÉER TOURNÉE") and not st.session_state.tournee_id:
+# ==================== INTERFACE D'ACCUEIL ====================
+st.markdown('<div class="main-header"><h1>♻️ SUIVI COLLECTE MÉKHÉ</h1><p>Interface de saisie et cartographie temps réel</p></div>', unsafe_allow_html=True)
+
+with st.container():
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        agent = st.text_input("👤 Nom de l'Agent", value="Awa")
+        equipe = st.selectbox("👥 Équipe de collecte", ["Équipe A", "Équipe B", "Équipe C", "Équipe D"])
+    with c2:
+        date_j = st.date_input("📅 Date", value=date.today())
+        try:
+            with engine.connect() as conn:
+                q_list = conn.execute(text("SELECT nom FROM quartiers WHERE actif = true")).fetchall()
+                quartiers = [r[0] for r in q_list]
+            q_sel = st.selectbox("🏘️ Quartier de collecte", quartiers if quartiers else ["NDIOP"])
+        except: q_sel = st.selectbox("🏘️ Quartier", ["NDIOP"])
+    with c3:
+        km_final = st.number_input("📏 KM Compteur Final", min_value=0.0)
+
+if st.button("🚀 DÉMARRER LA COLLECTE DU JOUR") and not st.session_state.tournee_id:
     with engine.connect() as conn:
         res = conn.execute(text("""
-            INSERT INTO tournees (date_tournee, quartier_id, agent_nom, statut) 
-            VALUES (:d, :q, :a, 'en_cours') RETURNING id
-        """), {"d": date_j, "q": quartiers.get(quartier_sel, 1), "a": agent})
+            INSERT INTO tournees (date_tournee, agent_nom, equipe, statut) 
+            VALUES (:d, :a, :e, 'en_cours') RETURNING id
+        """), {"d": date_j, "a": agent, "e": equipe})
         st.session_state.tournee_id = res.fetchone()[0]
         conn.commit()
-    st.success(f"✅ Tournée n°{st.session_state.tournee_id} ouverte !")
+    st.success(f"✅ Tournée n°{st.session_state.tournee_id} ouverte pour l'{equipe}")
 
-# ==================== COLLECTE 1 (OBLIGATOIRE) ====================
-st.markdown('<div class="collecte-card">🚛 <b>PREMIER TOUR (C1)</b></div>', unsafe_allow_html=True)
-c1a, c1b = st.columns(2)
-with c1a:
-    h_dep1 = st.text_input("⏰ Heure Départ Dépôt", value="07:00", key="h_dep1")
-    if st.button("📍 ENR. DÉPART DÉPÔT (C1)"): 
-        enregistrer_point_sql(st.session_state.tournee_id, "depart_depot", "Départ C1", 1)
-    
-    h_deb1 = st.text_input("⏰ Heure Début Collecte", value="07:30", key="h_deb1")
-    if st.button("📍 ENR. DÉBUT RAMASSAGE (C1)"): 
-        enregistrer_point_sql(st.session_state.tournee_id, "debut_collecte", "Début C1", 1)
+# ==================== TOURS DE COLLECTE ====================
+# --- TOUR 1 ---
+st.markdown('<div class="card">🚛 <b>PREMIÈRE TOURNÉE (C1)</b></div>', unsafe_allow_html=True)
+t1_col1, t1_col2 = st.columns(2)
+with t1_col1:
+    if st.button("📍 DÉPART DÉPÔT"): enregistrer_gps_sql(st.session_state.tournee_id, "depart_depot", "Départ Dépôt C1", 1)
+    if st.button("📍 DÉBUT RAMASSAGE"): enregistrer_gps_sql(st.session_state.tournee_id, "debut_collecte", "Début Ramassage C1", 1)
+with t1_col2:
+    if st.button("📍 FIN & DÉCHARGE"): enregistrer_gps_sql(st.session_state.tournee_id, "arrivee_decharge", "Fin & Décharge C1", 1)
+    vol1 = st.number_input("📦 Volume C1 (m³)", min_value=0.0, value=10.0)
 
-with c1b:
-    h_fin1 = st.text_input("⏰ Heure Fin Collecte", value="09:30", key="h_fin1")
-    if st.button("📍 ENR. FIN RAMASSAGE (C1)"): 
-        enregistrer_point_sql(st.session_state.tournee_id, "fin_collecte", "Fin C1", 1)
-    
-    vol1 = st.number_input("📦 Volume Collecté C1 (m³)", min_value=0.0, key="vol1")
-
-st.markdown("<b>🏭 DÉCHARGE C1</b>", unsafe_allow_html=True)
-d1a, d1b = st.columns(2)
-with d1a:
-    h_ent1 = st.text_input("⏰ Entrée Décharge 1", value="10:00")
-    if st.button("📍 ENR. ENTRÉE DÉCHARGE (C1)"): 
-        enregistrer_point_sql(st.session_state.tournee_id, "arrivee_decharge", "Entrée Déch 1", 1)
-with d1b:
-    h_sor1 = st.text_input("⏰ Sortie Décharge 1", value="10:30")
-    if st.button("📍 ENR. SORTIE DÉCHARGE (C1)"): 
-        enregistrer_point_sql(st.session_state.tournee_id, "sortie_decharge", "Sortie Déch 1", 1)
-
-# ==================== CHOIX DEUXIÈME TOUR ====================
+# --- TOUR 2 OPTIONNEL ---
 if not st.session_state.show_c2:
-    st.markdown('<div class="option-card">', unsafe_allow_html=True)
-    if st.button("➕ AJOUTER UN DEUXIÈME TOUR (C2)"):
+    if st.button("➕ AJOUTER UNE DEUXIÈME TOURNÉE (C2)"):
         st.session_state.show_c2 = True
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.markdown('<div class="collecte2-card">🚛 <b>DEUXIÈME TOUR (C2)</b></div>', unsafe_allow_html=True)
-    if st.button("❌ ANNULER LE DEUXIÈME TOUR"):
-        st.session_state.show_c2 = False
-        st.rerun()
-        
-    c2a, c2b = st.columns(2)
-    with c2a:
-        h_dep2 = st.text_input("⏰ Heure Départ vers C2", value="11:00")
-        if st.button("📍 ENR. DÉPART (C2)"): 
-            enregistrer_point_sql(st.session_state.tournee_id, "depart_depot", "Départ C2", 2)
-        h_deb2 = st.text_input("⏰ Heure Début Collecte C2", value="11:15")
-        if st.button("📍 ENR. DÉBUT RAMASSAGE (C2)"): 
-            enregistrer_point_sql(st.session_state.tournee_id, "debut_collecte", "Début C2", 2)
-    with c2b:
-        h_fin2 = st.text_input("⏰ Heure Fin Collecte C2", value="13:00")
-        if st.button("📍 ENR. FIN RAMASSAGE (C2)"): 
-            enregistrer_point_sql(st.session_state.tournee_id, "fin_collecte", "Fin C2", 2)
-        vol2 = st.number_input("📦 Volume Collecté C2 (m³)", min_value=0.0, key="vol2")
+    st.markdown('<div class="card" style="border-left-color: #FF9800;">🚛 <b>DEUXIÈME TOURNÉE (C2)</b></div>', unsafe_allow_html=True)
+    t2_col1, t2_col2 = st.columns(2)
+    with t2_col1:
+        if st.button("📍 DÉBUT C2"): enregistrer_gps_sql(st.session_state.tournee_id, "debut_collecte", "Début C2", 2)
+    with t2_col2:
+        if st.button("📍 RETOUR FINAL"): enregistrer_gps_sql(st.session_state.tournee_id, "retour_depot", "Retour Final", 2)
+        vol2 = st.number_input("📦 Volume C2 (m³)", min_value=0.0, value=5.0)
 
-    st.markdown("<b>🏭 DÉCHARGE C2</b>", unsafe_allow_html=True)
-    d2a, d2b = st.columns(2)
-    with d2a:
-        h_ent2 = st.text_input("⏰ Entrée Décharge 2", value="13:30")
-        if st.button("📍 ENR. ENTRÉE DÉCHARGE (C2)"): 
-            enregistrer_point_sql(st.session_state.tournee_id, "arrivee_decharge", "Entrée Déch 2", 2)
-    with d2b:
-        h_sor2 = st.text_input("⏰ Sortie Décharge 2", value="14:00")
-        if st.button("📍 ENR. SORTIE DÉCHARGE (C2)"): 
-            enregistrer_point_sql(st.session_state.tournee_id, "sortie_decharge", "Sortie Déch 2", 2)
-
-# ==================== RETOUR FINAL ====================
-st.markdown("---")
-h_ret_final = st.text_input("🏁 Heure de Retour Final au Dépôt", value="14:45")
-if st.button("📍 ENREGISTRER POSITION RETOUR FINAL"): 
-    enregistrer_point_sql(st.session_state.tournee_id, "retour_depot", "Fin de journée", 2 if st.session_state.show_c2 else 1)
-
-if st.button("💾 SAUVEGARDER ET FERMER LA TOURNÉE", type="primary"):
-    v2_final = vol2 if st.session_state.show_c2 else 0
+# ==================== SAUVEGARDE & EXCEL ====================
+st.write("---")
+if st.button("💾 ENREGISTRER TOUT ET GÉNÉRER RAPPORT", type="primary"):
+    vol_total = vol1 + (vol2 if st.session_state.show_c2 else 0)
     with engine.connect() as conn:
         conn.execute(text("""
-            UPDATE tournees SET 
-            volume_collecte1 = :v1, volume_collecte2 = :v2, 
-            volume_m3 = :vt, distance_parcourue_km = :d,
-            heure_depot_depart = :h1, heure_retour_depot = :h2,
-            statut = 'termine'
-            WHERE id = :tid
-        """), {
-            "v1": vol1, "v2": v2_final, "vt": vol1 + v2_final, "d": dist_km,
-            "h1": h_dep1, "h2": h_ret_final, "tid": st.session_state.tournee_id
-        })
+            UPDATE tournees SET volume_collecte1 = :v1, volume_collecte2 = :v2, 
+            volume_m3 = :vt, distance_parcourue_km = :km, statut = 'termine' WHERE id = :tid
+        """), {"v1": vol1, "v2": vol2 if st.session_state.show_c2 else 0, "vt": vol_total, "km": km_final, "tid": st.session_state.tournee_id})
         conn.commit()
+    
+    # Génération Excel
+    df_export = pd.DataFrame([{
+        "Date": date_j, "Agent": agent, "Equipe": equipe, "Quartier": q_sel,
+        "Volume Total (m3)": vol_total, "KM Final": km_final, "Points GPS": len(st.session_state.points_gps)
+    }])
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_export.to_excel(writer, index=False, sheet_name='Rapport_Collecte')
+    st.download_button(label="📥 Télécharger le fichier Excel", data=output.getvalue(), file_name=f"collecte_{date_j}_{equipe}.xlsx", mime="application/vnd.ms-excel")
     st.balloons()
-    st.success(f"✅ Tournée terminée ! Volume total : {vol1 + v2_final} m³")
 
-# ==================== CARTE ====================
+# ==================== CARTE INTERACTIVE ====================
 if st.session_state.points_gps:
-    st.markdown("### 🗺️ ITINÉRAIRE RÉEL")
-    df = pd.DataFrame(st.session_state.points_gps)
-    fig = px.scatter_mapbox(df, lat="lat", lon="lon", color="col", zoom=13, height=500,
-                            color_continuous_scale=["green", "orange"])
-    if len(df) > 1:
-        fig.add_trace(go.Scattermapbox(lat=df["lat"], lon=df["lon"], mode='lines+markers', line=dict(width=4, color='blue')))
+    st.markdown("### 🗺️ ITINÉRAIRE DE L'AGENT EN TEMPS RÉEL")
+    df_map = pd.DataFrame(st.session_state.points_gps)
+    fig = px.scatter_mapbox(df_map, lat="lat", lon="lon", hover_name="Type", hover_data=["Heure"],
+                            color="Tour", zoom=14, height=600)
+    
+    # Ajouter les lignes pour voir le trajet
+    if len(df_map) > 1:
+        fig.add_trace(go.Scattermapbox(lat=df_map["lat"], lon=df_map["lon"], mode='lines', line=dict(width=3, color='green'), name="Trajet"))
+        
     fig.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":0,"l":0,"b":0})
     st.plotly_chart(fig, use_container_width=True)
+    
+    # Tableau récapitulatif sous la carte
+    st.write("📋 Historique des points capturés :")
+    st.table(df_map[["Heure", "Type", "Tour"]])
