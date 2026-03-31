@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS - Collecte Mékhé</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #2E7D32;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            max-width: 350px;
+            width: 100%;
+        }
+        button {
+            background: #2E7D32;
+            color: white;
+            border: none;
+            padding: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 50px;
+            width: 100%;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        .position {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 12px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📍 VOTRE POSITION</h1>
+        <button id="getGPS">📍 OBTENIR MA POSITION</button>
+        <div id="result" class="position">Cliquez sur le bouton</div>
+        <button id="copyBtn" style="display:none;">📋 COPIER ET RETOUR</button>
+    </div>
+
+    <script>
+        let currentPos = null;
+        
+        document.getElementById('getGPS').onclick = function() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = "📍 Recherche...";
+            
+            if (!navigator.geolocation) {
+                resultDiv.innerHTML = "❌ GPS non supporté";
+                return;
+            }
+            
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    currentPos = {
+                        lat: pos.coords.latitude,
+                        lon: pos.coords.longitude
+                    };
+                    resultDiv.innerHTML = `✅ Position trouvée !<br>📍 ${currentPos.lat.toFixed(6)}<br>📍 ${currentPos.lon.toFixed(6)}`;
+                    resultDiv.className = "position success";
+                    document.getElementById('copyBtn').style.display = "block";
+                },
+                function(err) {
+                    resultDiv.innerHTML = "❌ " + err.message;
+                    resultDiv.className = "position error";
+                }
+            );
+        };
+        
+        document.getElementById('copyBtn').onclick = function() {
+            if (currentPos) {
+                navigator.clipboard.writeText(`${currentPos.lat},${currentPos.lon}`);
+                alert("✅ Coordonnées copiées !");
+                window.location.href = "javascript:history.back()";
+            }
+        };
+    </script>
+</body>
+</html>
