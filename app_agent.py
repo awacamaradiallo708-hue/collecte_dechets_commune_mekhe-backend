@@ -1,9 +1,9 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec GPS réel via streamlit-js-eval
-- Capture la position exacte du téléphone à chaque clic
-- Tracé de l'itinéraire entre les points
-- Saisie manuelle des heures
+Version avec GPS réel via streamlit-js-eval (corrigée)
+- Une seule demande de position par bouton "Actualiser GPS"
+- Stockage de la position en session
+- Tracé de l'itinéraire
 """
 
 import streamlit as st
@@ -15,9 +15,7 @@ from sqlalchemy import create_engine, text
 import os
 from io import BytesIO
 import time as time_module
-import random
 
-# Import pour le GPS réel
 try:
     from streamlit_js_eval import get_geolocation
     GPS_AVAILABLE = True
@@ -105,7 +103,6 @@ def get_equipe_id(nom):
         return result[0] if result else None
 
 def calculer_distance(lat1, lon1, lat2, lon2):
-    """Calcule la distance en km entre deux points GPS (formule de Haversine)"""
     from math import radians, sin, cos, sqrt, atan2
     R = 6371
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
@@ -115,29 +112,24 @@ def calculer_distance(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return R * c
 
-def get_real_gps():
-    """
-    Récupère la position GPS réelle du téléphone via streamlit-js-eval.
-    Retourne un dict avec lat, lon, accuracy ou None en cas d'erreur.
-    """
+def get_current_gps():
+    """Appelle get_geolocation une seule fois et retourne la position."""
     if not GPS_AVAILABLE:
         return None
     try:
         geolocation = get_geolocation()
         if geolocation and 'coords' in geolocation:
-            coords = geolocation['coords']
             return {
-                "lat": coords['latitude'],
-                "lon": coords['longitude'],
-                "accuracy": coords.get('accuracy', 100)
+                "lat": geolocation['coords']['latitude'],
+                "lon": geolocation['coords']['longitude'],
+                "accuracy": geolocation['coords'].get('accuracy', 100)
             }
-        else:
-            return None
+        return None
     except Exception as e:
         st.error(f"Erreur GPS: {e}")
         return None
 
-# ==================== SESSION STATE INITIALISATION ====================
+# ==================== SESSION STATE ====================
 defaults = {
     'agent_nom': "",
     'tournee_id': None,
@@ -164,7 +156,8 @@ defaults = {
     'heure_sortie_decharge2': "14:15",
     'heure_retour_depot': "14:45",
     'temps_debut_tournee': None,
-    'gps_actif': False
+    'gps_actif': False,
+    'current_gps': None   # Stocke la dernière position GPS obtenue
 }
 
 for key, value in defaults.items():
@@ -194,15 +187,24 @@ with st.sidebar:
             st.rerun()
     
     if st.session_state.gps_actif:
-        st.markdown('<div class="gps-active">📍 GPS ACTIF - Position automatique</div>', unsafe_allow_html=True)
-        # Tester le GPS et afficher la position actuelle
-        pos_test = get_real_gps()
-        if pos_test:
-            st.metric("📍 Latitude", f"{pos_test['lat']:.6f}")
-            st.metric("📍 Longitude", f"{pos_test['lon']:.6f}")
-            st.caption(f"🎯 Précision: {pos_test['accuracy']:.0f} m")
+        st.markdown('<div class="gps-active">📍 GPS ACTIF</div>', unsafe_allow_html=True)
+        # Bouton pour actualiser la position
+        if st.button("📍 ACTUALISER MA POSITION", use_container_width=True):
+            pos = get_current_gps()
+            if pos:
+                st.session_state.current_gps = pos
+                st.success(f"✅ Position mise à jour : {pos['lat']:.6f}, {pos['lon']:.6f} (précision {pos['accuracy']:.0f} m)")
+            else:
+                st.error("❌ Impossible d'obtenir la position. Vérifiez les permissions.")
+        # Afficher la position actuelle stockée
+        if st.session_state.current_gps:
+            st.metric("📍 Latitude", f"{st.session_state.current_gps['lat']:.6f}")
+            st.metric("📍 Longitude", f"{st.session_state.current_gps['lon']:.6f}")
+            st.caption(f"🎯 Précision: {st.session_state.current_gps['accuracy']:.0f} m")
         else:
-            st.warning("⚠️ En attente de signal GPS...")
+            st.info("Cliquez sur 'Actualiser ma position' pour obtenir votre position GPS.")
+    else:
+        st.info("GPS désactivé. Les coordonnées du quartier seront utilisées.")
     
     st.markdown("---")
     st.markdown("### 📊 Récapitulatif")
@@ -297,19 +299,14 @@ if not st.session_state.collecte1_validee:
                 volume = None
         with col3:
             if st.button(f"📍 Enregistrer", key=f"btn_{type_point}", use_container_width=True):
-                # ========== CAPTURE GPS RÉELLE ==========
-                if st.session_state.gps_actif:
-                    pos = get_real_gps()
-                    if pos:
-                        lat, lon, accuracy = pos['lat'], pos['lon'], pos['accuracy']
-                        st.success(f"📍 Position GPS capturée (précision: {accuracy:.0f}m)")
-                    else:
-                        # Fallback si GPS non disponible
-                        lat, lon = 15.115000, -16.635000
-                        st.warning("⚠️ GPS non disponible, utilisation de coordonnées par défaut")
+                # Récupérer la position à utiliser
+                if st.session_state.gps_actif and st.session_state.current_gps:
+                    lat = st.session_state.current_gps['lat']
+                    lon = st.session_state.current_gps['lon']
+                    accuracy = st.session_state.current_gps['accuracy']
+                    st.success(f"📍 Position GPS utilisée (précision: {accuracy:.0f}m)")
                 else:
-                    # GPS désactivé, utiliser coordonnées par défaut (quartier)
-                    # Vous pouvez ici utiliser les coordonnées du quartier sélectionné
+                    # Fallback : coordonnées du quartier
                     quartier_coords = {
                         "NDIOP": (15.121048, -16.686826),
                         "Lébou Est": (15.109558, -16.628958),
@@ -320,7 +317,11 @@ if not st.session_state.collecte1_validee:
                         "Ngaye Diagne": (15.120364, -16.635608)
                     }
                     lat, lon = quartier_coords.get(st.session_state.quartier_nom, (15.115000, -16.635000))
-                    st.info("📍 GPS désactivé, utilisation des coordonnées du quartier")
+                    accuracy = 100
+                    if st.session_state.gps_actif:
+                        st.warning("⚠️ Aucune position GPS disponible. Actualisez d'abord votre position.")
+                    else:
+                        st.info("📍 GPS désactivé, utilisation des coordonnées du quartier.")
                 
                 point = {
                     "type": type_point,
@@ -329,7 +330,7 @@ if not st.session_state.collecte1_validee:
                     "heure": st.session_state[heure_key],
                     "titre": titre,
                     "volume": volume if volume else None,
-                    "precision": accuracy if 'accuracy' in locals() else None
+                    "precision": accuracy
                 }
                 
                 if type_point == "sortie_decharge" and volume > 0:
@@ -338,7 +339,7 @@ if not st.session_state.collecte1_validee:
                 else:
                     st.success(f"✅ {titre} enregistré")
                 
-                # Calculer la distance depuis le dernier point
+                # Calcul de la distance depuis le dernier point
                 if st.session_state.derniere_position:
                     distance = calculer_distance(
                         st.session_state.derniere_position["lat"],
@@ -405,15 +406,11 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
                     volume = None
             with col3:
                 if st.button(f"📍 Enregistrer", key=f"btn2_{type_point}", use_container_width=True):
-                    # ========== CAPTURE GPS RÉELLE ==========
-                    if st.session_state.gps_actif:
-                        pos = get_real_gps()
-                        if pos:
-                            lat, lon, accuracy = pos['lat'], pos['lon'], pos['accuracy']
-                            st.success(f"📍 Position GPS capturée (précision: {accuracy:.0f}m)")
-                        else:
-                            lat, lon = 15.115000, -16.635000
-                            st.warning("⚠️ GPS non disponible, utilisation de coordonnées par défaut")
+                    if st.session_state.gps_actif and st.session_state.current_gps:
+                        lat = st.session_state.current_gps['lat']
+                        lon = st.session_state.current_gps['lon']
+                        accuracy = st.session_state.current_gps['accuracy']
+                        st.success(f"📍 Position GPS utilisée (précision: {accuracy:.0f}m)")
                     else:
                         quartier_coords = {
                             "NDIOP": (15.121048, -16.686826),
@@ -425,7 +422,11 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
                             "Ngaye Diagne": (15.120364, -16.635608)
                         }
                         lat, lon = quartier_coords.get(st.session_state.quartier_nom, (15.115000, -16.635000))
-                        st.info("📍 GPS désactivé, utilisation des coordonnées du quartier")
+                        accuracy = 100
+                        if st.session_state.gps_actif:
+                            st.warning("⚠️ Aucune position GPS disponible. Actualisez d'abord votre position.")
+                        else:
+                            st.info("📍 GPS désactivé, utilisation des coordonnées du quartier.")
                     
                     point = {
                         "type": type_point,
@@ -435,7 +436,7 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
                         "titre": titre,
                         "collecte": 2,
                         "volume": volume if volume else None,
-                        "precision": accuracy if 'accuracy' in locals() else None
+                        "precision": accuracy
                     }
                     
                     if type_point == "sortie_decharge2" and volume > 0:
