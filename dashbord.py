@@ -114,6 +114,9 @@ def load_all_data():
             df['annee'] = df['date'].dt.year
             df['mois'] = df['date'].dt.month
             df['jour_semaine'] = df['date'].dt.day_name()
+            # Renommer pour cohérence interne
+            df.rename(columns={'agent_nom': 'agent'}, inplace=True)
+            df.rename(columns={'distance_parcourue_km': 'distance'}, inplace=True)
         
         # Points GPS
         query_points = text("""
@@ -196,14 +199,14 @@ def exporter_word(df, periode_type, periode_nom, stats):
         
         <h2>📈 Résumé général</h2>
         表
-             <tr><th>Indicateur</th><th>Valeur</th></tr>
-             <tr><td>Nombre de tournées</td><td>{stats.get('nb_tournees', 0)}</td></tr>
-             <tr><td>Volume total collecté</td><td>{stats.get('volume_total', 0):.1f} m³</td></tr>
-             <tr><td>Distance totale parcourue</td><td>{stats.get('distance_total', 0):.1f} km</td></tr>
-             <tr><td>Nombre de quartiers visités</td><td>{stats.get('nb_quartiers', 0)}</td></tr>
-             <tr><td>Nombre d'agents actifs</td><td>{stats.get('nb_agents', 0)}</td></tr>
-             <tr><td>Quartier le plus productif</td><td>{stats.get('top_quartier', 'N/A')}</td></tr>
-         </table>
+              <tr><th>Indicateur</th><th>Valeur</th></tr>
+              <tr><td>Nombre de tournées</td><td>{stats.get('nb_tournees', 0)}</td></tr>
+              <tr><td>Volume total collecté</td><td>{stats.get('volume_total', 0):.1f} m³</td></tr>
+              <tr><td>Distance totale parcourue</td><td>{stats.get('distance_total', 0):.1f} km</td></tr>
+              <tr><td>Nombre de quartiers visités</td><td>{stats.get('nb_quartiers', 0)}</td></tr>
+              <tr><td>Nombre d'agents actifs</td><td>{stats.get('nb_agents', 0)}</td></tr>
+              <tr><td>Quartier le plus productif</td><td>{stats.get('top_quartier', 'N/A')}</td></tr>
+        表
         
         <h2>🏘️ Répartition par quartier</h2>
         {df.groupby('quartier').agg({'volume_total': 'sum'}).sort_values('volume_total', ascending=False).to_html()}
@@ -658,7 +661,7 @@ tabs = st.tabs([
     "🗺️ Carte",
     "📋 Détails",
     "🔧 Administration",
-    "📊 Rapports"   # <-- Nouvel onglet
+    "📊 Rapports"
 ])
 
 # ==================== TAB 1 : TABLEAU DE BORD ====================
@@ -756,7 +759,6 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("🗺️ Carte des points de collecte")
     if not df_points_filtre.empty:
-        # Filtre par collecte
         collecte_filtre = st.radio("Afficher les points de :", ["Toutes", "Collecte 1", "Collecte 2"], horizontal=True)
         if collecte_filtre == "Collecte 1":
             df_carte = df_points_filtre[df_points_filtre['collecte_numero'] == 1]
