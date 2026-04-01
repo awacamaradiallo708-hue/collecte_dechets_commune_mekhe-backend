@@ -1,14 +1,9 @@
-streamlit>=1.29.0
-pandas>=2.0.0
-plotly>=5.17.0
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0
-python-dotenv>=1.0.0
-openpyxl>=3.1.0
-geopy>=2.3.0
-requests>=2.28.0
-
-# AJOUTS IMPORTANTS
-streamlit-autorefresh>=1.0.1
-streamlit-js-eval>=0.1.5
-reportlab>=4.0.0
+streamlit
+pandas
+plotly
+sqlalchemy
+psycopg2-binary
+python-dotenv
+openpyxl
+folium
+streamlit-folium
