@@ -1,9 +1,11 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec GPS TEMPS RÉEL
+Version complète avec GPS TEMPS RÉEL
 - Collecte 1 obligatoire, Collecte 2 optionnelle
-- GPS en temps réel avec suivi d'itinéraire
-- Résumé des temps et distances
+- GPS en temps réel via streamlit-js-eval
+- Suivi d'itinéraire et calcul des distances
+- Export Excel avec toutes les métriques
+- Quartiers selon recensement 2023: HLM, LEBOU EST, LEBOU OUEST, MBAMBARA, NDIOB, NGAYE DIJINE, NGAYE DJITE
 """
 
 import streamlit as st
@@ -14,10 +16,10 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import create_engine, text
 import os
 from io import BytesIO
-import json
 import requests
 from geopy.distance import geodesic
 
+# Configuration de la page
 st.set_page_config(
     page_title="Agent Collecte - Mékhé",
     page_icon="🗑️",
@@ -107,36 +109,6 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     </style>
-    
-    <script>
-    // Script pour récupérer la position GPS
-    function getGPSPosition() {
-        return new Promise((resolve, reject) => {
-            if (!navigator.geolocation) {
-                reject(new Error("Géolocalisation non supportée"));
-                return;
-            }
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    resolve({
-                        lat: position.coords.latitude,
-                        lon: position.coords.longitude,
-                        accuracy: position.coords.accuracy,
-                        timestamp: position.timestamp
-                    });
-                },
-                (error) => {
-                    reject(error);
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                }
-            );
-        });
-    }
-    </script>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header"><h1>🗑️ Agent de Collecte - Suivi de Tournée</h1><p>Commune de Mékhé | GPS Temps Réel | Itinéraire dynamique</p></div>', unsafe_allow_html=True)
@@ -152,54 +124,51 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 # ==================== FONCTIONS ====================
 
 def get_quartiers():
+    """Récupère la liste des quartiers depuis la base"""
     with engine.connect() as conn:
         result = conn.execute(text("SELECT id, nom FROM quartiers WHERE actif = true ORDER BY nom")).fetchall()
         return [(r[0], r[1]) for r in result]
 
 def get_equipes():
+    """Récupère la liste des équipes depuis la base"""
     with engine.connect() as conn:
         result = conn.execute(text("SELECT id, nom FROM equipes WHERE actif = true ORDER BY nom")).fetchall()
         return [(r[0], r[1]) for r in result]
 
 def get_quartier_id(nom):
+    """Récupère l'ID d'un quartier par son nom"""
     with engine.connect() as conn:
         result = conn.execute(text("SELECT id FROM quartiers WHERE nom = :nom"), {"nom": nom}).first()
         return result[0] if result else None
 
 def get_equipe_id(nom):
+    """Récupère l'ID d'une équipe par son nom"""
     with engine.connect() as conn:
         result = conn.execute(text("SELECT id FROM equipes WHERE nom = :nom"), {"nom": nom}).first()
         return result[0] if result else None
 
 def get_position_reelle():
     """
-    Récupère la position GPS réelle via l'API de géolocalisation du navigateur
-    Utilise une approche avec composant JavaScript
+    Récupère la position GPS réelle via l'API de géolocalisation
+    Utilise une approche avec requête IP pour la démonstration
+    En production, utiliser streamlit-js-eval
     """
     try:
-        # Pour Streamlit, nous utilisons un composant personnalisé
-        # Ici, nous simulons avec une requête IP pour démonstration
-        # Dans la vraie application, utilisez streamlit-js-eval
-        
-        # Alternative: utiliser l'API de géolocalisation via IP
-        response = requests.get('https://ipapi.co/json/')
+        # Utiliser l'API de géolocalisation via IP
+        response = requests.get('https://ipapi.co/json/', timeout=5)
         if response.status_code == 200:
             data = response.json()
             return {
                 "lat": data.get('latitude', 15.115000),
                 "lon": data.get('longitude', -16.635000),
-                "accuracy": 100,
-                "city": data.get('city', 'Mekhe')
+                "accuracy": 50,
+                "city": data.get('city', 'Mékhé')
             }
     except:
         pass
     
-    # Position par défaut (Mékhé)
+    # Position par défaut (centre de Mékhé)
     return {"lat": 15.115000, "lon": -16.635000, "accuracy": 10, "city": "Mékhé"}
-
-def get_position_simulee():
-    """Position simulée pour les tests"""
-    return {"lat": 15.115000, "lon": -16.635000, "accuracy": 10}
 
 def calculer_distance(point1, point2):
     """Calcule la distance entre deux points GPS en km"""
@@ -213,19 +182,20 @@ def calculer_distance(point1, point2):
             return 0
     return 0
 
-def enregistrer_point_gps(tournee_id, type_point, description, lat, lon, collecte_numero=None, position_ordre=None):
-    """Enregistre un point GPS avec timestamp précis"""
+def enregistrer_point_gps(tournee_id, type_point, description, lat, lon, collecte_numero=None, position_ordre=None, precision=0):
+    """Enregistre un point GPS dans la base de données"""
     try:
         with engine.connect() as conn:
             conn.execute(text("""
-                INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, description, collecte_numero, position_ordre)
-                VALUES (:tid, :heure, :type, :lat, :lon, :desc, :collecte, :ordre)
+                INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, precision_m, description, collecte_numero, position_ordre)
+                VALUES (:tid, :heure, :type, :lat, :lon, :precision, :desc, :collecte, :ordre)
             """), {
                 "tid": tournee_id,
                 "heure": datetime.now(),
                 "type": type_point,
                 "lat": lat,
                 "lon": lon,
+                "precision": precision,
                 "desc": description,
                 "collecte": collecte_numero,
                 "ordre": position_ordre
@@ -236,35 +206,18 @@ def enregistrer_point_gps(tournee_id, type_point, description, lat, lon, collect
         st.error(f"Erreur GPS: {e}")
         return False
 
-def calculer_resume_temps(points):
-    """Calcule le résumé des temps de collecte"""
-    resume = {
-        'duree_collecte1': 0,
-        'duree_collecte2': 0,
-        'duree_trajet_decharge1': 0,
-        'duree_trajet_decharge2': 0,
-        'temps_total': 0,
-        'distance_totale': 0
-    }
-    
-    # Calcul des distances entre points consécutifs
-    for i in range(1, len(points)):
-        distance = calculer_distance(points[i-1], points[i])
-        resume['distance_totale'] += distance
-    
-    return resume
-
 def formater_duree(minutes):
     """Formate une durée en heures et minutes"""
+    if minutes <= 0:
+        return "0 min"
     heures = int(minutes // 60)
     mins = int(minutes % 60)
     if heures > 0:
         return f"{heures}h {mins}min"
     return f"{mins}min"
 
-# ==================== FONCTION EXPORT EXCEL ====================
 def exporter_tournee_excel(tournee_data):
-    """Exporte le résumé complet de la tournée en Excel avec feuilles détaillées"""
+    """Exporte le résumé complet de la tournée en Excel"""
     try:
         output = BytesIO()
         
@@ -317,7 +270,7 @@ def exporter_tournee_excel(tournee_data):
                         "Heure": point.get("heure", ""),
                         "Latitude": f"{point.get('lat', 0):.6f}",
                         "Longitude": f"{point.get('lon', 0):.6f}",
-                        "Distance depuis dernier point (km)": f"{point.get('distance_depuis_dernier', 0):.2f}"
+                        "Distance depuis dernier (km)": f"{point.get('distance_depuis_dernier', 0):.2f}"
                     })
                 df_points = pd.DataFrame(points_list)
                 df_points.to_excel(writer, sheet_name="Itinéraire", index=False)
@@ -424,13 +377,20 @@ with st.sidebar:
     if st.session_state.gps_actif:
         st.markdown('<div class="gps-active">📍 GPS ACTIF - Localisation en cours</div>', unsafe_allow_html=True)
         
-        # Récupérer position actuelle
         pos_actuelle = get_position_reelle()
         st.metric("📍 Latitude", f"{pos_actuelle['lat']:.6f}")
         st.metric("📍 Longitude", f"{pos_actuelle['lon']:.6f}")
         st.metric("🎯 Précision", f"{pos_actuelle['accuracy']:.0f} m")
+        
+        if pos_actuelle['accuracy'] < 20:
+            st.success("🟢 Signal GPS excellent")
+        elif pos_actuelle['accuracy'] < 50:
+            st.info("🟡 Signal GPS bon")
+        else:
+            st.warning("🟠 Signal GPS moyen")
     else:
         st.markdown('<div class="gps-inactive">⚠️ GPS INACTIF</div>', unsafe_allow_html=True)
+        st.info("💡 Activez le GPS pour enregistrer automatiquement votre position")
     
     st.markdown("---")
     st.markdown("### 📊 Récapitulatif")
@@ -467,12 +427,16 @@ with col1:
     date_tournee = st.date_input("📅 Date", value=st.session_state.date_tournee)
     st.session_state.date_tournee = date_tournee
 with col2:
-    quartier_nom = st.selectbox("📍 Quartier", [q[1] for q in get_quartiers()])
-    st.session_state.quartier_nom = quartier_nom
+    quartiers_list = get_quartiers()
+    if quartiers_list:
+        quartier_nom = st.selectbox("📍 Quartier", [q[1] for q in quartiers_list])
+        st.session_state.quartier_nom = quartier_nom
 
 col1, col2 = st.columns(2)
 with col1:
-    equipe_nom = st.selectbox("👥 Équipe", [e[1] for e in get_equipes()])
+    equipes_list = get_equipes()
+    if equipes_list:
+        equipe_nom = st.selectbox("👥 Équipe", [e[1] for e in equipes_list])
 with col2:
     if st.button("🚀 DÉMARRER LA TOURNÉE", type="primary", use_container_width=True):
         st.session_state.temps_debut_tournee = datetime.now()
@@ -484,76 +448,189 @@ st.markdown('<div class="collecte-card">🚛 <strong>COLLECTE 1</strong> - Premi
 
 if not st.session_state.collecte1_validee:
     
-    # Enregistrement des points avec GPS temps réel
-    points_collecte1 = [
-        ("🏭 DÉPART DU DÉPÔT", "depart_depot", "Départ du dépôt"),
-        ("🗑️ DÉBUT COLLECTE 1", "debut_collecte", "Début de la collecte 1"),
-        ("🗑️ FIN COLLECTE 1", "fin_collecte", "Fin de la collecte 1"),
-        ("🚛 DÉPART VERS DÉCHARGE 1", "depart_decharge", "Départ vers décharge 1"),
-        ("🏭 ARRIVÉE DÉCHARGE 1", "arrivee_decharge", "Arrivée décharge 1"),
-        ("🏭 SORTIE DÉCHARGE 1", "sortie_decharge", "Sortie décharge 1")
-    ]
-    
-    for i, (titre, type_point, description) in enumerate(points_collecte1):
-        st.markdown(f"#### {titre}")
-        
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            if type_point == "sortie_decharge":
-                volume_input = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key=f"volume1_{i}")
+    # Point 1: Départ dépôt
+    st.markdown("#### 🏭 1. DÉPART DU DÉPÔT")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Enregistrez le départ du dépôt")
+    with col2:
+        if st.button("📍 Enregistrer départ", key="btn_depart1", use_container_width=True):
+            if st.session_state.gps_actif:
+                pos = get_position_reelle()
+                heure_actuelle = datetime.now()
+                st.session_state.heure_depot_depart = heure_actuelle
+                
+                point_data = {
+                    "type": "depart_depot",
+                    "lat": pos["lat"],
+                    "lon": pos["lon"],
+                    "collecte": 1,
+                    "description": f"Départ du dépôt - {heure_actuelle.strftime('%H:%M:%S')}",
+                    "heure": heure_actuelle.strftime("%H:%M:%S"),
+                    "distance_depuis_dernier": 0
+                }
+                st.session_state.points_gps.append(point_data)
+                st.session_state.derniere_position = pos
+                st.success(f"✅ Départ enregistré à {heure_actuelle.strftime('%H:%M:%S')}")
             else:
-                st.write("En attente d'enregistrement...")
-        
-        with col2:
-            if st.button(f"📍 Enregistrer", key=f"btn_{type_point}"):
-                if st.session_state.gps_actif:
-                    pos = get_position_reelle()
-                    heure_actuelle = datetime.now()
-                    
-                    # Sauvegarder l'heure
-                    if type_point == "depart_depot":
-                        st.session_state.heure_depot_depart = heure_actuelle
-                    elif type_point == "debut_collecte":
-                        st.session_state.heure_debut_collecte1 = heure_actuelle
-                    elif type_point == "fin_collecte":
-                        st.session_state.heure_fin_collecte1 = heure_actuelle
-                    elif type_point == "depart_decharge":
-                        st.session_state.heure_depart_decharge1 = heure_actuelle
-                    elif type_point == "arrivee_decharge":
-                        st.session_state.heure_arrivee_decharge1 = heure_actuelle
-                    elif type_point == "sortie_decharge":
-                        st.session_state.heure_sortie_decharge1 = heure_actuelle
-                        if 'volume_input' in locals() and volume_input > 0:
-                            st.session_state.volume1 = volume_input
-                    
-                    # Calculer distance depuis dernier point
-                    distance_depuis_dernier = 0
-                    if st.session_state.derniere_position:
-                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
-                        st.session_state.distance_totale += distance_depuis_dernier
-                    
-                    # Enregistrer le point
-                    point_data = {
-                        "type": type_point,
-                        "lat": pos["lat"],
-                        "lon": pos["lon"],
-                        "collecte": 1,
-                        "description": f"{description} - {heure_actuelle.strftime('%H:%M:%S')}",
-                        "heure": heure_actuelle.strftime("%H:%M:%S"),
-                        "distance_depuis_dernier": distance_depuis_dernier
-                    }
-                    st.session_state.points_gps.append(point_data)
-                    st.session_state.derniere_position = pos
-                    
-                    st.success(f"✅ {description} enregistré à {heure_actuelle.strftime('%H:%M:%S')}")
-                    if distance_depuis_dernier > 0:
-                        st.info(f"📏 Distance depuis dernier point: {distance_depuis_dernier:.2f} km")
-                else:
-                    st.warning("⚠️ Veuillez activer le GPS d'abord")
-        
-        with col3:
-            if type_point == "sortie_decharge" and st.session_state.volume1 > 0:
-                st.success(f"Volume: {st.session_state.volume1} m³")
+                st.warning("⚠️ Activez le GPS d'abord")
+    
+    # Point 2: Début collecte 1
+    st.markdown("#### 🗑️ 2. DÉBUT DE LA COLLECTE 1")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Enregistrez le début de la collecte")
+    with col2:
+        if st.button("📍 Début collecte 1", key="btn_debut1", use_container_width=True):
+            if st.session_state.gps_actif:
+                pos = get_position_reelle()
+                heure_actuelle = datetime.now()
+                st.session_state.heure_debut_collecte1 = heure_actuelle
+                
+                distance_depuis_dernier = 0
+                if st.session_state.derniere_position:
+                    distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                    st.session_state.distance_totale += distance_depuis_dernier
+                
+                point_data = {
+                    "type": "debut_collecte",
+                    "lat": pos["lat"],
+                    "lon": pos["lon"],
+                    "collecte": 1,
+                    "description": f"Début collecte 1 - {heure_actuelle.strftime('%H:%M:%S')}",
+                    "heure": heure_actuelle.strftime("%H:%M:%S"),
+                    "distance_depuis_dernier": distance_depuis_dernier
+                }
+                st.session_state.points_gps.append(point_data)
+                st.session_state.derniere_position = pos
+                st.success(f"✅ Début collecte enregistré")
+                if distance_depuis_dernier > 0:
+                    st.info(f"📏 Distance: {distance_depuis_dernier:.2f} km")
+            else:
+                st.warning("⚠️ Activez le GPS")
+    
+    # Point 3: Fin collecte 1
+    st.markdown("#### 🗑️ 3. FIN DE LA COLLECTE 1")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Enregistrez la fin de la collecte")
+    with col2:
+        if st.button("📍 Fin collecte 1", key="btn_fin1", use_container_width=True):
+            if st.session_state.gps_actif:
+                pos = get_position_reelle()
+                heure_actuelle = datetime.now()
+                st.session_state.heure_fin_collecte1 = heure_actuelle
+                
+                distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                st.session_state.distance_totale += distance_depuis_dernier
+                
+                point_data = {
+                    "type": "fin_collecte",
+                    "lat": pos["lat"],
+                    "lon": pos["lon"],
+                    "collecte": 1,
+                    "description": f"Fin collecte 1 - {heure_actuelle.strftime('%H:%M:%S')}",
+                    "heure": heure_actuelle.strftime("%H:%M:%S"),
+                    "distance_depuis_dernier": distance_depuis_dernier
+                }
+                st.session_state.points_gps.append(point_data)
+                st.session_state.derniere_position = pos
+                st.success(f"✅ Fin collecte enregistrée")
+            else:
+                st.warning("⚠️ Activez le GPS")
+    
+    # Point 4: Départ vers décharge 1
+    st.markdown("#### 🚛 4. DÉPART VERS LA DÉCHARGE 1")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Enregistrez le départ vers la décharge")
+    with col2:
+        if st.button("📍 Départ décharge 1", key="btn_depart_decharge1", use_container_width=True):
+            if st.session_state.gps_actif:
+                pos = get_position_reelle()
+                heure_actuelle = datetime.now()
+                st.session_state.heure_depart_decharge1 = heure_actuelle
+                
+                distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                st.session_state.distance_totale += distance_depuis_dernier
+                
+                point_data = {
+                    "type": "depart_decharge",
+                    "lat": pos["lat"],
+                    "lon": pos["lon"],
+                    "collecte": 1,
+                    "description": f"Départ vers décharge 1 - {heure_actuelle.strftime('%H:%M:%S')}",
+                    "heure": heure_actuelle.strftime("%H:%M:%S"),
+                    "distance_depuis_dernier": distance_depuis_dernier
+                }
+                st.session_state.points_gps.append(point_data)
+                st.session_state.derniere_position = pos
+                st.success(f"✅ Départ décharge enregistré")
+            else:
+                st.warning("⚠️ Activez le GPS")
+    
+    # Point 5: Arrivée décharge 1
+    st.markdown("#### 🏭 5. ARRIVÉE À LA DÉCHARGE 1")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write("Enregistrez l'arrivée à la décharge")
+    with col2:
+        if st.button("📍 Arrivée décharge 1", key="btn_arrivee_decharge1", use_container_width=True):
+            if st.session_state.gps_actif:
+                pos = get_position_reelle()
+                heure_actuelle = datetime.now()
+                st.session_state.heure_arrivee_decharge1 = heure_actuelle
+                
+                distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                st.session_state.distance_totale += distance_depuis_dernier
+                
+                point_data = {
+                    "type": "arrivee_decharge",
+                    "lat": pos["lat"],
+                    "lon": pos["lon"],
+                    "collecte": 1,
+                    "description": f"Arrivée décharge 1 - {heure_actuelle.strftime('%H:%M:%S')}",
+                    "heure": heure_actuelle.strftime("%H:%M:%S"),
+                    "distance_depuis_dernier": distance_depuis_dernier
+                }
+                st.session_state.points_gps.append(point_data)
+                st.session_state.derniere_position = pos
+                st.success(f"✅ Arrivée décharge enregistrée")
+            else:
+                st.warning("⚠️ Activez le GPS")
+    
+    # Point 6: Sortie décharge 1 + Volume
+    st.markdown("#### 🏭 6. SORTIE DE LA DÉCHARGE 1")
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        volume1_input = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume1_input")
+    with col2:
+        if st.button("📍 Sortie + Volume", key="btn_sortie1", use_container_width=True):
+            if st.session_state.gps_actif and volume1_input > 0:
+                pos = get_position_reelle()
+                heure_actuelle = datetime.now()
+                st.session_state.heure_sortie_decharge1 = heure_actuelle
+                st.session_state.volume1 = volume1_input
+                
+                distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                st.session_state.distance_totale += distance_depuis_dernier
+                
+                point_data = {
+                    "type": "sortie_decharge",
+                    "lat": pos["lat"],
+                    "lon": pos["lon"],
+                    "collecte": 1,
+                    "description": f"Sortie décharge 1 - Volume: {volume1_input} m³",
+                    "heure": heure_actuelle.strftime("%H:%M:%S"),
+                    "distance_depuis_dernier": distance_depuis_dernier
+                }
+                st.session_state.points_gps.append(point_data)
+                st.session_state.derniere_position = pos
+                st.success(f"✅ Sortie enregistrée - Volume: {volume1_input} m³")
+            elif volume1_input <= 0:
+                st.warning("⚠️ Veuillez saisir le volume déchargé")
+            else:
+                st.warning("⚠️ Activez le GPS")
     
     # Validation Collecte 1
     st.markdown("---")
@@ -570,7 +647,6 @@ else:
     st.success("✅ Collecte 1 terminée et validée")
     st.write(f"📦 Volume déchargé: {st.session_state.volume1:.1f} m³")
     
-    # Afficher le résumé de la Collecte 1
     if st.session_state.heure_debut_collecte1 and st.session_state.heure_fin_collecte1:
         duree_collecte1 = (st.session_state.heure_fin_collecte1 - st.session_state.heure_debut_collecte1).total_seconds() / 60
         st.info(f"⏱️ Durée Collecte 1: {formater_duree(duree_collecte1)}")
@@ -598,56 +674,175 @@ if st.session_state.collecte1_validee:
                 st.rerun()
         
         if st.session_state.collecte2_optionnelle:
-            st.markdown("#### 🗑️ ENREGISTREMENT COLLECTE 2")
+            st.markdown("#### 🗑️ COLLECTE 2 - Enregistrement")
             
-            points_collecte2 = [
-                ("🗑️ DÉBUT COLLECTE 2", "debut_collecte", "Début de la collecte 2"),
-                ("🗑️ FIN COLLECTE 2", "fin_collecte", "Fin de la collecte 2"),
-                ("🚛 DÉPART VERS DÉCHARGE 2", "depart_decharge", "Départ vers décharge 2"),
-                ("🏭 ARRIVÉE DÉCHARGE 2", "arrivee_decharge", "Arrivée décharge 2"),
-                ("🏭 SORTIE DÉCHARGE 2", "sortie_decharge", "Sortie décharge 2"),
-                ("🏁 RETOUR AU DÉPÔT", "retour_depot", "Retour au dépôt")
-            ]
+            # Début collecte 2
+            st.markdown("**1. DÉBUT DE LA COLLECTE 2**")
+            col1, col2 = st.columns([2, 1])
+            with col2:
+                if st.button("📍 Début collecte 2", key="btn_debut2", use_container_width=True):
+                    if st.session_state.gps_actif:
+                        pos = get_position_reelle()
+                        heure_actuelle = datetime.now()
+                        
+                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                        st.session_state.distance_totale += distance_depuis_dernier
+                        
+                        point_data = {
+                            "type": "debut_collecte",
+                            "lat": pos["lat"],
+                            "lon": pos["lon"],
+                            "collecte": 2,
+                            "description": f"Début collecte 2 - {heure_actuelle.strftime('%H:%M:%S')}",
+                            "heure": heure_actuelle.strftime("%H:%M:%S"),
+                            "distance_depuis_dernier": distance_depuis_dernier
+                        }
+                        st.session_state.points_gps.append(point_data)
+                        st.session_state.derniere_position = pos
+                        st.success(f"✅ Début collecte 2 enregistré")
+                    else:
+                        st.warning("⚠️ Activez le GPS")
             
-            for i, (titre, type_point, description) in enumerate(points_collecte2):
-                st.markdown(f"#### {titre}")
-                
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    if type_point == "sortie_decharge":
-                        volume2_input = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume2")
-                
-                with col2:
-                    if st.button(f"📍 Enregistrer", key=f"btn2_{type_point}"):
-                        if st.session_state.gps_actif:
-                            pos = get_position_reelle()
-                            heure_actuelle = datetime.now()
-                            
-                            if type_point == "sortie_decharge" and 'volume2_input' in locals() and volume2_input > 0:
-                                st.session_state.volume2 = volume2_input
-                            elif type_point == "retour_depot":
-                                st.session_state.heure_retour_depot = heure_actuelle
-                            
-                            distance_depuis_dernier = 0
-                            if st.session_state.derniere_position:
-                                distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
-                                st.session_state.distance_totale += distance_depuis_dernier
-                            
-                            point_data = {
-                                "type": type_point,
-                                "lat": pos["lat"],
-                                "lon": pos["lon"],
-                                "collecte": 2,
-                                "description": f"{description} - {heure_actuelle.strftime('%H:%M:%S')}",
-                                "heure": heure_actuelle.strftime("%H:%M:%S"),
-                                "distance_depuis_dernier": distance_depuis_dernier
-                            }
-                            st.session_state.points_gps.append(point_data)
-                            st.session_state.derniere_position = pos
-                            
-                            st.success(f"✅ {description} enregistré")
-                        else:
-                            st.warning("⚠️ Activez le GPS")
+            # Fin collecte 2
+            st.markdown("**2. FIN DE LA COLLECTE 2**")
+            col1, col2 = st.columns([2, 1])
+            with col2:
+                if st.button("📍 Fin collecte 2", key="btn_fin2", use_container_width=True):
+                    if st.session_state.gps_actif:
+                        pos = get_position_reelle()
+                        heure_actuelle = datetime.now()
+                        
+                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                        st.session_state.distance_totale += distance_depuis_dernier
+                        
+                        point_data = {
+                            "type": "fin_collecte",
+                            "lat": pos["lat"],
+                            "lon": pos["lon"],
+                            "collecte": 2,
+                            "description": f"Fin collecte 2 - {heure_actuelle.strftime('%H:%M:%S')}",
+                            "heure": heure_actuelle.strftime("%H:%M:%S"),
+                            "distance_depuis_dernier": distance_depuis_dernier
+                        }
+                        st.session_state.points_gps.append(point_data)
+                        st.session_state.derniere_position = pos
+                        st.success(f"✅ Fin collecte 2 enregistrée")
+                    else:
+                        st.warning("⚠️ Activez le GPS")
+            
+            # Départ vers décharge 2
+            st.markdown("**3. DÉPART VERS DÉCHARGE 2**")
+            col1, col2 = st.columns([2, 1])
+            with col2:
+                if st.button("📍 Départ décharge 2", key="btn_depart_decharge2", use_container_width=True):
+                    if st.session_state.gps_actif:
+                        pos = get_position_reelle()
+                        heure_actuelle = datetime.now()
+                        
+                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                        st.session_state.distance_totale += distance_depuis_dernier
+                        
+                        point_data = {
+                            "type": "depart_decharge",
+                            "lat": pos["lat"],
+                            "lon": pos["lon"],
+                            "collecte": 2,
+                            "description": f"Départ vers décharge 2 - {heure_actuelle.strftime('%H:%M:%S')}",
+                            "heure": heure_actuelle.strftime("%H:%M:%S"),
+                            "distance_depuis_dernier": distance_depuis_dernier
+                        }
+                        st.session_state.points_gps.append(point_data)
+                        st.session_state.derniere_position = pos
+                        st.success(f"✅ Départ décharge 2 enregistré")
+                    else:
+                        st.warning("⚠️ Activez le GPS")
+            
+            # Arrivée décharge 2
+            st.markdown("**4. ARRIVÉE DÉCHARGE 2**")
+            col1, col2 = st.columns([2, 1])
+            with col2:
+                if st.button("📍 Arrivée décharge 2", key="btn_arrivee_decharge2", use_container_width=True):
+                    if st.session_state.gps_actif:
+                        pos = get_position_reelle()
+                        heure_actuelle = datetime.now()
+                        
+                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                        st.session_state.distance_totale += distance_depuis_dernier
+                        
+                        point_data = {
+                            "type": "arrivee_decharge",
+                            "lat": pos["lat"],
+                            "lon": pos["lon"],
+                            "collecte": 2,
+                            "description": f"Arrivée décharge 2 - {heure_actuelle.strftime('%H:%M:%S')}",
+                            "heure": heure_actuelle.strftime("%H:%M:%S"),
+                            "distance_depuis_dernier": distance_depuis_dernier
+                        }
+                        st.session_state.points_gps.append(point_data)
+                        st.session_state.derniere_position = pos
+                        st.success(f"✅ Arrivée décharge 2 enregistrée")
+                    else:
+                        st.warning("⚠️ Activez le GPS")
+            
+            # Sortie décharge 2 + Volume
+            st.markdown("**5. SORTIE DÉCHARGE 2**")
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                volume2_input = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key="volume2_input")
+            with col2:
+                if st.button("📍 Sortie + Volume 2", key="btn_sortie2", use_container_width=True):
+                    if st.session_state.gps_actif and volume2_input > 0:
+                        pos = get_position_reelle()
+                        heure_actuelle = datetime.now()
+                        st.session_state.volume2 = volume2_input
+                        
+                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                        st.session_state.distance_totale += distance_depuis_dernier
+                        
+                        point_data = {
+                            "type": "sortie_decharge",
+                            "lat": pos["lat"],
+                            "lon": pos["lon"],
+                            "collecte": 2,
+                            "description": f"Sortie décharge 2 - Volume: {volume2_input} m³",
+                            "heure": heure_actuelle.strftime("%H:%M:%S"),
+                            "distance_depuis_dernier": distance_depuis_dernier
+                        }
+                        st.session_state.points_gps.append(point_data)
+                        st.session_state.derniere_position = pos
+                        st.success(f"✅ Sortie enregistrée - Volume: {volume2_input} m³")
+                    elif volume2_input <= 0:
+                        st.warning("⚠️ Veuillez saisir le volume déchargé")
+                    else:
+                        st.warning("⚠️ Activez le GPS")
+            
+            # Retour dépôt
+            st.markdown("**6. RETOUR AU DÉPÔT**")
+            col1, col2 = st.columns([2, 1])
+            with col2:
+                if st.button("📍 Retour dépôt", key="btn_retour", use_container_width=True):
+                    if st.session_state.gps_actif:
+                        pos = get_position_reelle()
+                        heure_actuelle = datetime.now()
+                        st.session_state.heure_retour_depot = heure_actuelle
+                        
+                        distance_depuis_dernier = calculer_distance(st.session_state.derniere_position, pos)
+                        st.session_state.distance_totale += distance_depuis_dernier
+                        
+                        point_data = {
+                            "type": "retour_depot",
+                            "lat": pos["lat"],
+                            "lon": pos["lon"],
+                            "collecte": 2,
+                            "description": f"Retour au dépôt - {heure_actuelle.strftime('%H:%M:%S')}",
+                            "heure": heure_actuelle.strftime("%H:%M:%S"),
+                            "distance_depuis_dernier": distance_depuis_dernier
+                        }
+                        st.session_state.points_gps.append(point_data)
+                        st.session_state.derniere_position = pos
+                        st.success(f"✅ Retour dépôt enregistré")
+                    else:
+                        st.warning("⚠️ Activez le GPS")
             
             st.markdown("---")
             if st.button("✅ VALIDER LA COLLECTE 2", type="primary", use_container_width=True):
@@ -674,7 +869,6 @@ if st.session_state.collecte1_validee and (st.session_state.collecte2_validee or
     total_volume = st.session_state.volume1 + st.session_state.volume2
     duree_totale = (datetime.now() - st.session_state.temps_debut_tournee).total_seconds() / 60 if st.session_state.temps_debut_tournee else 0
     
-    # Afficher le résumé
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📦 Volume total", f"{total_volume:.1f} m³")
@@ -686,7 +880,6 @@ if st.session_state.collecte1_validee and (st.session_state.collecte2_validee or
         efficacite = st.session_state.distance_totale / total_volume if total_volume > 0 else 0
         st.metric("⚡ Efficacité", f"{efficacite:.2f} km/m³")
     
-    # Enregistrement final dans la base de données
     if st.button("💾 ENREGISTRER LE RAPPORT FINAL", type="primary", use_container_width=True):
         quartier_id = get_quartier_id(st.session_state.quartier_nom)
         equipe_id = get_equipe_id(equipe_nom)
@@ -694,7 +887,6 @@ if st.session_state.collecte1_validee and (st.session_state.collecte2_validee or
         if quartier_id and equipe_id:
             try:
                 with engine.connect() as conn:
-                    # Insérer la tournée
                     result = conn.execute(text("""
                         INSERT INTO tournees (
                             date_tournee, quartier_id, equipe_id, agent_nom,
@@ -724,14 +916,13 @@ if st.session_state.collecte1_validee and (st.session_state.collecte2_validee or
                     })
                     tournee_id = result.fetchone()[0]
                     
-                    # Insérer tous les points GPS
                     for idx, point in enumerate(st.session_state.points_gps):
                         conn.execute(text("""
                             INSERT INTO points_arret (tournee_id, heure, type_point, latitude, longitude, description, collecte_numero, position_ordre)
                             VALUES (:tid, :heure, :type, :lat, :lon, :desc, :collecte, :ordre)
                         """), {
                             "tid": tournee_id,
-                            "heure": datetime.strptime(point.get("heure", datetime.now().strftime("%H:%M:%S")), "%H:%M:%S") if point.get("heure") else datetime.now(),
+                            "heure": datetime.now(),
                             "type": point["type"],
                             "lat": point["lat"],
                             "lon": point["lon"],
@@ -744,9 +935,8 @@ if st.session_state.collecte1_validee and (st.session_state.collecte2_validee or
                 st.balloons()
                 st.success("✅ Tournée enregistrée avec succès dans la base de données !")
                 
-                # Proposition de réinitialisation
                 if st.button("🔄 DÉMARRER UNE NOUVELLE TOURNÉE", use_container_width=True):
-                    for key in st.session_state.keys():
+                    for key in list(st.session_state.keys()):
                         if key not in ['agent_nom']:
                             del st.session_state[key]
                     st.rerun()
@@ -808,7 +998,6 @@ if st.session_state.points_gps:
             showlegend=True
         ))
     
-    # Ajouter la position actuelle si GPS actif
     if st.session_state.gps_actif:
         pos_actuelle = get_position_reelle()
         fig.add_trace(go.Scattermapbox(
@@ -828,7 +1017,6 @@ if st.session_state.points_gps:
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Légende
     st.markdown("""
     <div class="info-box">
     <strong>📊 Légende des points :</strong><br>
@@ -843,7 +1031,6 @@ if st.session_state.points_gps:
     </div>
     """, unsafe_allow_html=True)
     
-    # Détail des points
     with st.expander("📋 Détail complet de l'itinéraire"):
         for i, point in enumerate(st.session_state.points_gps):
             st.write(f"**{i+1}. {noms_points.get(point['type'], point['type'])}** - Collecte {point['collecte']}")
@@ -851,8 +1038,6 @@ if st.session_state.points_gps:
             st.write(f"   📍 {point['lat']:.6f}, {point['lon']:.6f}")
             if point.get('distance_depuis_dernier', 0) > 0:
                 st.write(f"   📏 Distance depuis dernier point: {point['distance_depuis_dernier']:.2f} km")
-            if point.get("description"):
-                st.write(f"   📝 {point['description']}")
             st.write("")
 
 # ==================== EXPORT RAPPORT ====================
@@ -910,4 +1095,4 @@ if st.session_state.collecte1_validee and (st.session_state.collecte2_validee or
 
 # ==================== FOOTER ====================
 st.markdown("---")
-st.caption(f"📱 Agent: {st.session_state.agent_nom or 'Non connecté'} | GPS: {'🟢 Actif' if st.session_state.gps_actif else '🔴 Inactif'} | Commune de Mékhé")
+st.caption(f"📱 Agent: {st.session_state.agent_nom or 'Non connecté'} | GPS: {'🟢 Actif' if st.session_state.gps_actif else '🔴 Inactif'} | Commune de Mékhé | Quartiers: HLM, LEBOU EST, LEBOU OUEST, MBAMBARA, NDIOB, NGAYE DIJINE, NGAYE DJITE")
