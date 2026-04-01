@@ -14,6 +14,60 @@ from io import BytesIO
 import random
 import time as time_module
 
+# ==================== COMPOSANT GPS JAVASCRIPT ====================
+st.markdown("""
+<script>
+// Fonction pour obtenir la position GPS réelle
+function getRealPosition() {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+            reject("GPS non supporté");
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const pos = {
+                    lat: position.coords.latitude,
+                    lon: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    timestamp: new Date().toISOString()
+                };
+                // Stocker dans localStorage pour le récupérer plus tard
+                localStorage.setItem('last_gps', JSON.stringify(pos));
+                resolve(pos);
+            },
+            (error) => {
+                reject(error.message);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+    });
+}
+
+// Stocker la position dans un élément caché
+async function storePosition() {
+    try {
+        const pos = await getRealPosition();
+        let input = document.getElementById('gps_data');
+        if (!input) {
+            input = document.createElement('input');
+            input.type = 'hidden';
+            input.id = 'gps_data';
+            document.body.appendChild(input);
+        }
+        input.value = JSON.stringify(pos);
+        return pos;
+    } catch(e) {
+        console.error("Erreur GPS:", e);
+        return null;
+    }
+}
+
+// Lancer la capture au chargement
+storePosition();
+</script>
+""", unsafe_allow_html=True)
+
 st.set_page_config(
     page_title="Agent Collecte - Mékhé",
     page_icon="🗑️",
