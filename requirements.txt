@@ -6,5 +6,5 @@ psycopg2-binary>=2.9.0
 python-dotenv>=1.0.0
 openpyxl>=3.1.0
 reportlab
-streamlit-js-eval
+streamlit-js-eval>=0.1.0
 geopy>=2.3.0
