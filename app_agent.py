@@ -1,6 +1,9 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec GPS réel (corrigée)
+Version avec GPS réel via streamlit-js-eval
+- Capture la position exacte du téléphone à chaque clic
+- Tracé de l'itinéraire entre les points
+- Saisie manuelle des heures
 """
 
 import streamlit as st
@@ -11,62 +14,16 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import os
 from io import BytesIO
-import random
 import time as time_module
+import random
 
-# ==================== COMPOSANT GPS JAVASCRIPT ====================
-st.markdown("""
-<script>
-// Fonction pour obtenir la position GPS réelle
-function getRealPosition() {
-    return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-            reject("GPS non supporté");
-            return;
-        }
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const pos = {
-                    lat: position.coords.latitude,
-                    lon: position.coords.longitude,
-                    accuracy: position.coords.accuracy,
-                    timestamp: new Date().toISOString()
-                };
-                // Stocker dans localStorage pour le récupérer plus tard
-                localStorage.setItem('last_gps', JSON.stringify(pos));
-                resolve(pos);
-            },
-            (error) => {
-                reject(error.message);
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-    });
-}
-
-// Stocker la position dans un élément caché
-async function storePosition() {
-    try {
-        const pos = await getRealPosition();
-        let input = document.getElementById('gps_data');
-        if (!input) {
-            input = document.createElement('input');
-            input.type = 'hidden';
-            input.id = 'gps_data';
-            document.body.appendChild(input);
-        }
-        input.value = JSON.stringify(pos);
-        return pos;
-    } catch(e) {
-        console.error("Erreur GPS:", e);
-        return null;
-    }
-}
-
-// Lancer la capture au chargement
-storePosition();
-</script>
-""", unsafe_allow_html=True)
+# Import pour le GPS réel
+try:
+    from streamlit_js_eval import get_geolocation
+    GPS_AVAILABLE = True
+except ImportError:
+    GPS_AVAILABLE = False
+    st.warning("⚠️ streamlit-js-eval non installé. Installez-le avec: pip install streamlit-js-eval")
 
 st.set_page_config(
     page_title="Agent Collecte - Mékhé",
@@ -148,7 +105,7 @@ def get_equipe_id(nom):
         return result[0] if result else None
 
 def calculer_distance(lat1, lon1, lat2, lon2):
-    """Calcule la distance en km entre deux points GPS"""
+    """Calcule la distance en km entre deux points GPS (formule de Haversine)"""
     from math import radians, sin, cos, sqrt, atan2
     R = 6371
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
@@ -158,8 +115,29 @@ def calculer_distance(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return R * c
 
+def get_real_gps():
+    """
+    Récupère la position GPS réelle du téléphone via streamlit-js-eval.
+    Retourne un dict avec lat, lon, accuracy ou None en cas d'erreur.
+    """
+    if not GPS_AVAILABLE:
+        return None
+    try:
+        geolocation = get_geolocation()
+        if geolocation and 'coords' in geolocation:
+            coords = geolocation['coords']
+            return {
+                "lat": coords['latitude'],
+                "lon": coords['longitude'],
+                "accuracy": coords.get('accuracy', 100)
+            }
+        else:
+            return None
+    except Exception as e:
+        st.error(f"Erreur GPS: {e}")
+        return None
+
 # ==================== SESSION STATE INITIALISATION ====================
-# Initialisation sécurisée des variables de session
 defaults = {
     'agent_nom': "",
     'tournee_id': None,
@@ -185,7 +163,8 @@ defaults = {
     'heure_arrivee_decharge2': "13:45",
     'heure_sortie_decharge2': "14:15",
     'heure_retour_depot': "14:45",
-    'temps_debut_tournee': None
+    'temps_debut_tournee': None,
+    'gps_actif': False
 }
 
 for key, value in defaults.items():
@@ -202,9 +181,28 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📍 GPS")
-    if st.button("📍 CAPTURER MA POSITION", use_container_width=True):
-        # Simulation de position GPS (remplacer par vrai GPS)
-        st.info("Position simulée : 15.115000, -16.635000")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🎯 ACTIVER GPS", use_container_width=True):
+            st.session_state.gps_actif = True
+            st.success("✅ GPS activé")
+            st.rerun()
+    with col2:
+        if st.button("⏸️ DÉSACTIVER", use_container_width=True):
+            st.session_state.gps_actif = False
+            st.info("GPS désactivé")
+            st.rerun()
+    
+    if st.session_state.gps_actif:
+        st.markdown('<div class="gps-active">📍 GPS ACTIF - Position automatique</div>', unsafe_allow_html=True)
+        # Tester le GPS et afficher la position actuelle
+        pos_test = get_real_gps()
+        if pos_test:
+            st.metric("📍 Latitude", f"{pos_test['lat']:.6f}")
+            st.metric("📍 Longitude", f"{pos_test['lon']:.6f}")
+            st.caption(f"🎯 Précision: {pos_test['accuracy']:.0f} m")
+        else:
+            st.warning("⚠️ En attente de signal GPS...")
     
     st.markdown("---")
     st.markdown("### 📊 Récapitulatif")
@@ -278,7 +276,6 @@ st.markdown('<div class="collecte-card">🚛 COLLECTE 1</div>', unsafe_allow_htm
 
 if not st.session_state.collecte1_validee:
     
-    # Définition des étapes avec les clés correctes
     etapes = [
         ("🏭 DÉPART DÉPÔT", "depart_depot", "heure_depot_depart"),
         ("🗑️ DÉBUT COLLECTE 1", "debut_collecte", "heure_debut_collecte1"),
@@ -300,9 +297,30 @@ if not st.session_state.collecte1_validee:
                 volume = None
         with col3:
             if st.button(f"📍 Enregistrer", key=f"btn_{type_point}", use_container_width=True):
-                # Simuler une position différente pour chaque étape (remplacer par vrai GPS)
-                lat = 15.115000 + random.uniform(-0.01, 0.01)
-                lon = -16.635000 + random.uniform(-0.01, 0.01)
+                # ========== CAPTURE GPS RÉELLE ==========
+                if st.session_state.gps_actif:
+                    pos = get_real_gps()
+                    if pos:
+                        lat, lon, accuracy = pos['lat'], pos['lon'], pos['accuracy']
+                        st.success(f"📍 Position GPS capturée (précision: {accuracy:.0f}m)")
+                    else:
+                        # Fallback si GPS non disponible
+                        lat, lon = 15.115000, -16.635000
+                        st.warning("⚠️ GPS non disponible, utilisation de coordonnées par défaut")
+                else:
+                    # GPS désactivé, utiliser coordonnées par défaut (quartier)
+                    # Vous pouvez ici utiliser les coordonnées du quartier sélectionné
+                    quartier_coords = {
+                        "NDIOP": (15.121048, -16.686826),
+                        "Lébou Est": (15.109558, -16.628958),
+                        "Lébou Ouest": (15.098159, -16.619668),
+                        "Ngaye Djitté": (15.115900, -16.632128),
+                        "HLM": (15.117350, -16.635411),
+                        "Mbambara": (15.115765, -16.632181),
+                        "Ngaye Diagne": (15.120364, -16.635608)
+                    }
+                    lat, lon = quartier_coords.get(st.session_state.quartier_nom, (15.115000, -16.635000))
+                    st.info("📍 GPS désactivé, utilisation des coordonnées du quartier")
                 
                 point = {
                     "type": type_point,
@@ -310,7 +328,8 @@ if not st.session_state.collecte1_validee:
                     "lon": lon,
                     "heure": st.session_state[heure_key],
                     "titre": titre,
-                    "volume": volume if volume else None
+                    "volume": volume if volume else None,
+                    "precision": accuracy if 'accuracy' in locals() else None
                 }
                 
                 if type_point == "sortie_decharge" and volume > 0:
@@ -319,7 +338,7 @@ if not st.session_state.collecte1_validee:
                 else:
                     st.success(f"✅ {titre} enregistré")
                 
-                # Calculer la distance
+                # Calculer la distance depuis le dernier point
                 if st.session_state.derniere_position:
                     distance = calculer_distance(
                         st.session_state.derniere_position["lat"],
@@ -386,8 +405,27 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
                     volume = None
             with col3:
                 if st.button(f"📍 Enregistrer", key=f"btn2_{type_point}", use_container_width=True):
-                    lat = 15.115000 + random.uniform(-0.01, 0.01)
-                    lon = -16.635000 + random.uniform(-0.01, 0.01)
+                    # ========== CAPTURE GPS RÉELLE ==========
+                    if st.session_state.gps_actif:
+                        pos = get_real_gps()
+                        if pos:
+                            lat, lon, accuracy = pos['lat'], pos['lon'], pos['accuracy']
+                            st.success(f"📍 Position GPS capturée (précision: {accuracy:.0f}m)")
+                        else:
+                            lat, lon = 15.115000, -16.635000
+                            st.warning("⚠️ GPS non disponible, utilisation de coordonnées par défaut")
+                    else:
+                        quartier_coords = {
+                            "NDIOP": (15.121048, -16.686826),
+                            "Lébou Est": (15.109558, -16.628958),
+                            "Lébou Ouest": (15.098159, -16.619668),
+                            "Ngaye Djitté": (15.115900, -16.632128),
+                            "HLM": (15.117350, -16.635411),
+                            "Mbambara": (15.115765, -16.632181),
+                            "Ngaye Diagne": (15.120364, -16.635608)
+                        }
+                        lat, lon = quartier_coords.get(st.session_state.quartier_nom, (15.115000, -16.635000))
+                        st.info("📍 GPS désactivé, utilisation des coordonnées du quartier")
                     
                     point = {
                         "type": type_point,
@@ -396,7 +434,8 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
                         "heure": st.session_state[heure_key],
                         "titre": titre,
                         "collecte": 2,
-                        "volume": volume if volume else None
+                        "volume": volume if volume else None,
+                        "precision": accuracy if 'accuracy' in locals() else None
                     }
                     
                     if type_point == "sortie_decharge2" and volume > 0:
@@ -523,7 +562,7 @@ if st.session_state.points_gps:
         lon="lon",
         color="type",
         hover_name="titre",
-        hover_data={"heure": True, "distance_depuis_dernier": True},
+        hover_data={"heure": True, "distance_depuis_dernier": True, "precision": True},
         color_discrete_map=couleurs,
         zoom=13,
         center={"lat": 15.11, "lon": -16.65},
@@ -556,7 +595,9 @@ if st.session_state.points_gps:
             st.write(f"   📍 {point['lat']:.6f}, {point['lon']:.6f}")
             if point.get('distance_depuis_dernier', 0) > 0:
                 st.write(f"   📏 Distance: {point['distance_depuis_dernier']:.2f} km")
+            if point.get('precision'):
+                st.write(f"   🎯 Précision GPS: {point['precision']:.0f} m")
 
 # ==================== FOOTER ====================
 st.markdown("---")
-st.caption(f"👤 Agent: {st.session_state.agent_nom or 'Non connecté'} | 🗑️ Commune de Mékhé")
+st.caption(f"👤 Agent: {st.session_state.agent_nom or 'Non connecté'} | 📡 GPS: {'Actif' if st.session_state.gps_actif else 'Inactif'} | 🗑️ Commune de Mékhé")
