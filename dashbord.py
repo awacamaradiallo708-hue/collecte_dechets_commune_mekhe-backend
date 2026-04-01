@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
 from sqlalchemy import create_engine, text
+from datetime import datetime
 import os
 import io
 import calendar
@@ -14,80 +14,103 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 
 # ==================== CONFIGURATION ====================
-st.set_page_config(page_title="Mairie de Mékhé - Gestion Déchets", layout="wide")
-
-# Connexion
-if "DATABASE_URL" in st.secrets:
-    DATABASE_URL = st.secrets["DATABASE_URL"]
-else:
-    DATABASE_URL = os.getenv("DATABASE_URL")
-
+st.set_page_config(page_title="Dashboard Mékhé", layout="wide")
+DATABASE_URL = st.secrets["DATABASE_URL"] if "DATABASE_URL" in st.secrets else os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 
-def calculer_h(h_dep, h_arr):
+def calculer_duree(h_dep, h_arr):
     try:
         fmt = '%H:%M'
         d = datetime.strptime(str(h_arr)[:5], fmt) - datetime.strptime(str(h_dep)[:5], fmt)
         return round(d.total_seconds() / 3600, 2)
     except: return 0
 
-# ==================== CHARGEMENT DYNAMIQUE ====================
+# ==================== CHARGEMENT DES DONNÉES ====================
 @st.cache_data(ttl=60)
-def load_data_safe():
+def load_all_data():
     with engine.connect() as conn:
-        # On récupère TOUTES les colonnes pour éviter l'erreur "UndefinedColumn"
-        df_t = pd.read_sql(text("SELECT * FROM tournees WHERE statut = 'termine'"), conn)
+        df_t = pd.read_sql(text("""
+            SELECT id, date_tournee, agent_nom, quartier_nom, volume_total_m3, 
+                   distance_km, heure_depart_depot, heure_arrivee_depot 
+            FROM tournees WHERE statut = 'termine'
+        """), conn)
+        
         df_gps = pd.read_sql(text("SELECT * FROM points_arret"), conn)
         
         if not df_t.empty:
             df_t['date_tournee'] = pd.to_datetime(df_t['date_tournee'])
             df_t['semaine'] = df_t['date_tournee'].dt.isocalendar().week
             df_t['mois'] = df_t['date_tournee'].dt.month
-            
-            # Vérification des noms de colonnes pour le temps
-            # On teste les deux variantes possibles
-            c_dep = 'heure_depart_depot' if 'heure_depart_depot' in df_t.columns else 'heure_depot_depart'
-            c_arr = 'heure_arrivee_depot' if 'heure_arrivee_depot' in df_t.columns else 'heure_retour_depot'
-            
-            if c_dep in df_t.columns and c_arr in df_t.columns:
-                df_t['duree_h'] = df_t.apply(lambda x: calculer_h(x[c_dep], x[c_arr]), axis=1)
-            else:
-                df_t['duree_h'] = 0
-                
+            df_t['duree_h'] = df_t.apply(lambda x: calculer_duree(x['heure_depart_depot'], x['heure_arrivee_depot']), axis=1)
         return df_t, df_gps
 
+# ==================== FONCTION PDF ====================
+def generer_pdf(df_p, titre):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    elements.append(Paragraph(f"MAIRIE DE MÉKHÉ - RAPPORT DE COLLECTE", styles['Title']))
+    elements.append(Paragraph(f"Période : {titre}", styles['Heading2']))
+    
+    data = [["Indicateur", "Valeur Totale"],
+            ["Volume (m³)", f"{df_p['volume_total_m3'].sum():.1f}"],
+            ["Temps (h)", f"{df_p['duree_h'].sum():.1f}"],
+            ["Nombre de Tournées", str(len(df_p))]]
+    
+    t = Table(data, colWidths=[200, 150])
+    t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.darkgreen), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 1, colors.black)]))
+    elements.append(t)
+    doc.build(elements)
+    return buffer.getvalue()
+
 # ==================== INTERFACE ====================
-st.title("🇸🇳 Dashboard de Suivi - Mékhé")
+st.title("📊 Suivi de la Collecte - Mairie de Mékhé")
 
 try:
-    df, df_gps = load_data_safe()
+    df, df_gps = load_all_data()
+    tabs = st.tabs(["📈 Analyse & Temps", "📍 Carte GPS", "📄 Rapports PDF", "🔧 Admin"])
 
-    if df.empty:
-        st.warning("Aucune donnée trouvée.")
-    else:
-        t1, t2, t3 = st.tabs(["Statistiques", "Carte GPS", "Rapports PDF"])
+    with tabs[0]:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Volume Total", f"{df['volume_total_m3'].sum():.1f} m³")
+        c2.metric("Temps Total", f"{df['duree_h'].sum():.1f} h")
+        c3.metric("Distance", f"{df['distance_km'].sum():.1f} km")
         
-        with t1:
-            col1, col2 = st.columns(2)
-            col1.metric("Volume Total (m³)", f"{df['volume_total_m3'].sum():.1f}")
-            col2.metric("Temps de Collecte (h)", f"{df['duree_h'].sum():.1f}")
-            
-            fig = px.bar(df, x='quartier_nom', y='volume_total_m3', color='agent_nom', title="Volume par Quartier")
-            st.plotly_chart(fig, use_container_width=True)
-            
-        with t2:
-            if not df_gps.empty:
-                st.map(df_gps) # Version simple pour tester la stabilité
-            else:
-                st.write("Pas de points GPS.")
+        fig = px.bar(df.groupby('quartier_nom')['volume_total_m3'].sum().reset_index(), 
+                     x='quartier_nom', y='volume_total_m3', title="Volume par Quartier", color_discrete_sequence=['#2E8B57'])
+        st.plotly_chart(fig, use_container_width=True)
 
-        with t3:
-            st.subheader("Exporter un rapport")
-            mode = st.radio("Période", ["Semaine", "Mois"])
-            if st.button("Générer PDF"):
-                st.success("Rapport prêt (Simulation)")
-                # La fonction PDF reste la même que précédemment
+    with tabs[1]:
+        st.subheader("📍 Points de passage des agents")
+        if not df_gps.empty:
+            fig_map = px.scatter_mapbox(df_gps, lat="latitude", lon="longitude", color="type_point", 
+                                        hover_data=["heure_passage"], mapbox_style="carto-positron", zoom=13, height=500)
+            st.plotly_chart(fig_map, use_container_width=True)
+
+    with tabs[2]:
+        st.subheader("Exporter en PDF")
+        type_r = st.radio("Période", ["Hebdomadaire", "Mensuel"], horizontal=True)
+        if type_r == "Hebdomadaire":
+            val = st.selectbox("Semaine", sorted(df['semaine'].unique(), reverse=True))
+            df_f = df[df['semaine'] == val]
+        else:
+            val = st.selectbox("Mois", range(1,13), format_func=lambda x: calendar.month_name[x])
+            df_f = df[df['mois'] == val]
+            
+        if st.button("🚀 Créer le PDF"):
+            pdf = generer_pdf(df_f, f"{type_r} {val}")
+            st.download_button("📥 Télécharger", pdf, "Rapport.pdf")
+
+    with tabs[3]:
+        st.subheader("🔧 Correction")
+        sel_id = st.selectbox("Tournée ID", df['id'].unique())
+        new_v = st.number_input("Nouveau Volume", value=float(df[df['id']==sel_id]['volume_total_m3'].iloc[0]))
+        if st.button("Mettre à jour"):
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE tournees SET volume_total_m3 = :v WHERE id = :id"), {"v": new_v, "id": int(sel_id)})
+            st.cache_data.clear()
+            st.success("Donnée corrigée !")
 
 except Exception as e:
-    st.error(f"Détails de l'erreur : {e}")
-    st.info("Astuce : Si l'erreur mentionne encore 'heure_depot_depart', cliquez sur 'Clear Cache' dans le menu Streamlit.")
+    st.error(f"Erreur : {e}")
