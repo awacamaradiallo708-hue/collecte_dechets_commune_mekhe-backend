@@ -1,9 +1,7 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec GPS réel via streamlit-js-eval (corrigée)
-- Une seule demande de position par bouton "Actualiser GPS"
-- Stockage de la position en session
-- Tracé de l'itinéraire
+Version avec sélection manuelle des points sur carte interactive
+Pas de GPS automatique, l'agent clique sur la carte pour chaque étape.
 """
 
 import streamlit as st
@@ -14,14 +12,10 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import os
 from io import BytesIO
-import time as time_module
-
-try:
-    from streamlit_js_eval import get_geolocation
-    GPS_AVAILABLE = True
-except ImportError:
-    GPS_AVAILABLE = False
-    st.warning("⚠️ streamlit-js-eval non installé. Installez-le avec: pip install streamlit-js-eval")
+import folium
+from streamlit_folium import folium_static
+from branca.element import Figure
+import json
 
 st.set_page_config(
     page_title="Agent Collecte - Mékhé",
@@ -54,14 +48,6 @@ st.markdown("""
         border-left: 4px solid #2196F3;
         margin: 1rem 0;
     }
-    .gps-active {
-        background: #4CAF50;
-        color: white;
-        padding: 0.5rem;
-        border-radius: 8px;
-        text-align: center;
-        font-weight: bold;
-    }
     .stButton button {
         width: 100%;
         padding: 12px;
@@ -71,7 +57,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header"><h1>🗑️ Agent de Collecte</h1><p>Commune de Mékhé | GPS réel | Tracé d\'itinéraire</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1>🗑️ Agent de Collecte</h1><p>Commune de Mékhé | Carte interactive</p></div>', unsafe_allow_html=True)
 
 # ==================== CONNEXION BASE DE DONNÉES ====================
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -112,57 +98,132 @@ def calculer_distance(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return R * c
 
-def get_current_gps():
-    """Appelle get_geolocation une seule fois et retourne la position."""
-    if not GPS_AVAILABLE:
-        return None
-    try:
-        geolocation = get_geolocation()
-        if geolocation and 'coords' in geolocation:
-            return {
-                "lat": geolocation['coords']['latitude'],
-                "lon": geolocation['coords']['longitude'],
-                "accuracy": geolocation['coords'].get('accuracy', 100)
-            }
-        return None
-    except Exception as e:
-        st.error(f"Erreur GPS: {e}")
-        return None
+def afficher_carte_et_point(titre, point_initial=None):
+    """
+    Affiche une carte interactive. L'agent clique pour définir un point.
+    Retourne (lat, lon) si un point a été sélectionné, sinon None.
+    """
+    import folium
+    from streamlit_folium import folium_static
+    import streamlit.components.v1 as components
+
+    # Centre par défaut
+    if point_initial:
+        centre = [point_initial[0], point_initial[1]]
+    else:
+        centre = [15.115, -16.635]
+
+    m = folium.Map(location=centre, zoom_start=14)
+    # Ajouter un marqueur temporaire pour indiquer le point
+    marker = None
+    if point_initial:
+        marker = folium.Marker(location=centre, popup="Point actuel")
+        marker.add_to(m)
+
+    # Ajouter un script pour capturer le clic et stocker la position
+    # On utilise un élément caché pour stocker les coordonnées
+    click_js = """
+    <script>
+    function onMapClick(e) {
+        var lat = e.latlng.lat;
+        var lng = e.latlng.lng;
+        document.getElementById('selected_lat').value = lat;
+        document.getElementById('selected_lon').value = lng;
+        document.getElementById('selected_accuracy').value = "0";
+        // On peut aussi mettre à jour un marqueur, mais pour simplifier on stocke
+        console.log("Point cliqué : ", lat, lng);
+    }
+    // On attend que la carte soit chargée
+    setTimeout(() => {
+        var map = document.querySelector('.folium-map');
+        if (map) {
+            map._leaflet_map.on('click', onMapClick);
+        }
+    }, 1000);
+    </script>
+    <input type="hidden" id="selected_lat" value="">
+    <input type="hidden" id="selected_lon" value="">
+    <input type="hidden" id="selected_accuracy" value="">
+    """
+    # On affiche la carte et on injecte le script via components.html
+    # Mais il faut une approche plus simple : on utilise la possibilité de stocker
+    # la position dans session_state via un formulaire.
+
+    # Solution pratique : on affiche la carte, et on ajoute deux champs pour que l'agent
+    # puisse entrer les coordonnées qu'il lit sur la carte (clic -> popup).
+    # On utilise le plugin LatLngPopup.
+    m.add_child(folium.LatLngPopup())
+
+    with st.container():
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.write(f"**{titre}** : cliquez sur la carte pour obtenir les coordonnées.")
+            folium_static(m, width=600, height=400)
+        with col2:
+            st.write("Coordonnées du point :")
+            lat = st.text_input("Latitude", key=f"lat_{titre}")
+            lon = st.text_input("Longitude", key=f"lon_{titre}")
+            if st.button("Valider ce point", key=f"valider_{titre}"):
+                if lat and lon:
+                    try:
+                        return float(lat), float(lon)
+                    except:
+                        st.error("Format invalide")
+                else:
+                    st.warning("Veuillez entrer les coordonnées (cliquez sur la carte pour les obtenir).")
+    return None
 
 # ==================== SESSION STATE ====================
-defaults = {
-    'agent_nom': "",
-    'tournee_id': None,
-    'date_tournee': date.today(),
-    'quartier_nom': "",
-    'volume1': 0.0,
-    'volume2': 0.0,
-    'points_gps': [],
-    'collecte1_validee': False,
-    'collecte2_validee': False,
-    'collecte2_optionnelle': False,
-    'derniere_position': None,
-    'distance_totale': 0.0,
-    'heure_depot_depart': "07:00",
-    'heure_debut_collecte1': "07:30",
-    'heure_fin_collecte1': "09:30",
-    'heure_depart_decharge1': "09:45",
-    'heure_arrivee_decharge1': "10:15",
-    'heure_sortie_decharge1': "10:45",
-    'heure_debut_collecte2': "11:00",
-    'heure_fin_collecte2': "13:00",
-    'heure_depart_decharge2': "13:15",
-    'heure_arrivee_decharge2': "13:45",
-    'heure_sortie_decharge2': "14:15",
-    'heure_retour_depot': "14:45",
-    'temps_debut_tournee': None,
-    'gps_actif': False,
-    'current_gps': None   # Stocke la dernière position GPS obtenue
-}
-
-for key, value in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+if 'agent_nom' not in st.session_state:
+    st.session_state.agent_nom = ""
+if 'tournee_id' not in st.session_state:
+    st.session_state.tournee_id = None
+if 'date_tournee' not in st.session_state:
+    st.session_state.date_tournee = date.today()
+if 'quartier_nom' not in st.session_state:
+    st.session_state.quartier_nom = ""
+if 'volume1' not in st.session_state:
+    st.session_state.volume1 = 0.0
+if 'volume2' not in st.session_state:
+    st.session_state.volume2 = 0.0
+if 'points_gps' not in st.session_state:
+    st.session_state.points_gps = []
+if 'collecte1_validee' not in st.session_state:
+    st.session_state.collecte1_validee = False
+if 'collecte2_validee' not in st.session_state:
+    st.session_state.collecte2_validee = False
+if 'collecte2_optionnelle' not in st.session_state:
+    st.session_state.collecte2_optionnelle = False
+if 'derniere_position' not in st.session_state:
+    st.session_state.derniere_position = None
+if 'distance_totale' not in st.session_state:
+    st.session_state.distance_totale = 0.0
+if 'heure_depot_depart' not in st.session_state:
+    st.session_state.heure_depot_depart = "07:00"
+if 'heure_debut_collecte1' not in st.session_state:
+    st.session_state.heure_debut_collecte1 = "07:30"
+if 'heure_fin_collecte1' not in st.session_state:
+    st.session_state.heure_fin_collecte1 = "09:30"
+if 'heure_depart_decharge1' not in st.session_state:
+    st.session_state.heure_depart_decharge1 = "09:45"
+if 'heure_arrivee_decharge1' not in st.session_state:
+    st.session_state.heure_arrivee_decharge1 = "10:15"
+if 'heure_sortie_decharge1' not in st.session_state:
+    st.session_state.heure_sortie_decharge1 = "10:45"
+if 'heure_debut_collecte2' not in st.session_state:
+    st.session_state.heure_debut_collecte2 = "11:00"
+if 'heure_fin_collecte2' not in st.session_state:
+    st.session_state.heure_fin_collecte2 = "13:00"
+if 'heure_depart_decharge2' not in st.session_state:
+    st.session_state.heure_depart_decharge2 = "13:15"
+if 'heure_arrivee_decharge2' not in st.session_state:
+    st.session_state.heure_arrivee_decharge2 = "13:45"
+if 'heure_sortie_decharge2' not in st.session_state:
+    st.session_state.heure_sortie_decharge2 = "14:15"
+if 'heure_retour_depot' not in st.session_state:
+    st.session_state.heure_retour_depot = "14:45"
+if 'temps_debut_tournee' not in st.session_state:
+    st.session_state.temps_debut_tournee = None
 
 # ==================== BARRE LATÉRALE ====================
 with st.sidebar:
@@ -171,41 +232,20 @@ with st.sidebar:
     if agent_nom_input:
         st.session_state.agent_nom = agent_nom_input
         st.success(f"✅ Connecté: {agent_nom_input}")
-    
+
     st.markdown("---")
-    st.markdown("### 📍 GPS")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🎯 ACTIVER GPS", use_container_width=True):
-            st.session_state.gps_actif = True
-            st.success("✅ GPS activé")
-            st.rerun()
-    with col2:
-        if st.button("⏸️ DÉSACTIVER", use_container_width=True):
-            st.session_state.gps_actif = False
-            st.info("GPS désactivé")
-            st.rerun()
-    
-    if st.session_state.gps_actif:
-        st.markdown('<div class="gps-active">📍 GPS ACTIF</div>', unsafe_allow_html=True)
-        # Bouton pour actualiser la position
-        if st.button("📍 ACTUALISER MA POSITION", use_container_width=True):
-            pos = get_current_gps()
-            if pos:
-                st.session_state.current_gps = pos
-                st.success(f"✅ Position mise à jour : {pos['lat']:.6f}, {pos['lon']:.6f} (précision {pos['accuracy']:.0f} m)")
-            else:
-                st.error("❌ Impossible d'obtenir la position. Vérifiez les permissions.")
-        # Afficher la position actuelle stockée
-        if st.session_state.current_gps:
-            st.metric("📍 Latitude", f"{st.session_state.current_gps['lat']:.6f}")
-            st.metric("📍 Longitude", f"{st.session_state.current_gps['lon']:.6f}")
-            st.caption(f"🎯 Précision: {st.session_state.current_gps['accuracy']:.0f} m")
-        else:
-            st.info("Cliquez sur 'Actualiser ma position' pour obtenir votre position GPS.")
-    else:
-        st.info("GPS désactivé. Les coordonnées du quartier seront utilisées.")
-    
+    st.markdown("### 📍 Aide")
+    st.info("""
+    Pour chaque point, cliquez sur la carte pour afficher les coordonnées, puis recopiez-les dans les champs.
+    Vous pouvez aussi utiliser un lien Google Maps pour obtenir votre position actuelle.
+    """)
+    # Lien vers Google Maps
+    st.markdown("""
+    <a href="https://www.google.com/maps/search/ma+position" target="_blank">
+        <button style="background:#2196F3; color:white; border:none; padding:10px; border-radius:8px; width:100%; margin-bottom:10px;">📍 OBTENIR MA POSITION (Google Maps)</button>
+    </a>
+    """, unsafe_allow_html=True)
+
     st.markdown("---")
     st.markdown("### 📊 Récapitulatif")
     if st.session_state.collecte1_validee:
@@ -278,6 +318,7 @@ st.markdown('<div class="collecte-card">🚛 COLLECTE 1</div>', unsafe_allow_htm
 
 if not st.session_state.collecte1_validee:
     
+    # Liste des étapes avec leurs types et heures
     etapes = [
         ("🏭 DÉPART DÉPÔT", "depart_depot", "heure_depot_depart"),
         ("🗑️ DÉBUT COLLECTE 1", "debut_collecte", "heure_debut_collecte1"),
@@ -288,70 +329,73 @@ if not st.session_state.collecte1_validee:
     ]
     
     for titre, type_point, heure_key in etapes:
-        col1, col2, col3 = st.columns([2, 1, 1])
+        st.markdown(f"#### {titre}")
+        
+        # Récupérer la position du point précédent pour centrer la carte
+        dernier_point = st.session_state.derniere_position
+        centre = [dernier_point['lat'], dernier_point['lon']] if dernier_point else None
+        
+        # Afficher la carte interactive
+        col1, col2 = st.columns([2, 1])
         with col1:
-            st.markdown(f"**{titre}**")
-            st.caption(f"Heure: {st.session_state[heure_key]}")
+            # Carte avec clic pour obtenir les coordonnées
+            m = folium.Map(location=centre or [15.115, -16.635], zoom_start=14)
+            m.add_child(folium.LatLngPopup())
+            folium_static(m, width=500, height=300)
+            st.caption("Cliquez sur la carte pour obtenir les coordonnées.")
         with col2:
+            st.write("**Coordonnées du point**")
+            lat = st.text_input("Latitude", key=f"lat_{type_point}", placeholder="Ex: 15.121048")
+            lon = st.text_input("Longitude", key=f"lon_{type_point}", placeholder="Ex: -16.686826")
             if type_point == "sortie_decharge":
-                volume = st.number_input("Volume (m³)", min_value=0.0, step=0.5, key=f"vol_{type_point}", value=0.0)
+                volume = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key=f"vol_{type_point}")
             else:
                 volume = None
-        with col3:
-            if st.button(f"📍 Enregistrer", key=f"btn_{type_point}", use_container_width=True):
-                # Récupérer la position à utiliser
-                if st.session_state.gps_actif and st.session_state.current_gps:
-                    lat = st.session_state.current_gps['lat']
-                    lon = st.session_state.current_gps['lon']
-                    accuracy = st.session_state.current_gps['accuracy']
-                    st.success(f"📍 Position GPS utilisée (précision: {accuracy:.0f}m)")
-                else:
-                    # Fallback : coordonnées du quartier
-                    quartier_coords = {
-                        "NDIOP": (15.121048, -16.686826),
-                        "Lébou Est": (15.109558, -16.628958),
-                        "Lébou Ouest": (15.098159, -16.619668),
-                        "Ngaye Djitté": (15.115900, -16.632128),
-                        "HLM": (15.117350, -16.635411),
-                        "Mbambara": (15.115765, -16.632181),
-                        "Ngaye Diagne": (15.120364, -16.635608)
-                    }
-                    lat, lon = quartier_coords.get(st.session_state.quartier_nom, (15.115000, -16.635000))
-                    accuracy = 100
-                    if st.session_state.gps_actif:
-                        st.warning("⚠️ Aucune position GPS disponible. Actualisez d'abord votre position.")
-                    else:
-                        st.info("📍 GPS désactivé, utilisation des coordonnées du quartier.")
-                
-                point = {
-                    "type": type_point,
-                    "lat": lat,
-                    "lon": lon,
-                    "heure": st.session_state[heure_key],
-                    "titre": titre,
-                    "volume": volume if volume else None,
-                    "precision": accuracy
-                }
-                
-                if type_point == "sortie_decharge" and volume > 0:
-                    st.session_state.volume1 = volume
-                    st.success(f"✅ {titre} - Volume: {volume} m³")
-                else:
-                    st.success(f"✅ {titre} enregistré")
-                
-                # Calcul de la distance depuis le dernier point
-                if st.session_state.derniere_position:
-                    distance = calculer_distance(
-                        st.session_state.derniere_position["lat"],
-                        st.session_state.derniere_position["lon"],
-                        lat, lon
-                    )
-                    st.session_state.distance_totale += distance
-                    st.info(f"📏 Distance depuis dernier point: {distance:.2f} km")
-                
-                point["distance_depuis_dernier"] = distance if st.session_state.derniere_position else 0
-                st.session_state.derniere_position = point
-                st.session_state.points_gps.append(point)
+        
+        # Bouton d'enregistrement
+        if st.button(f"📍 Enregistrer {titre}", key=f"btn_{type_point}", use_container_width=True):
+            if lat and lon:
+                try:
+                    lat_f = float(lat)
+                    lon_f = float(lon)
+                except:
+                    st.error("Coordonnées invalides")
+                    continue
+            else:
+                st.warning("Veuillez entrer les coordonnées (cliquez sur la carte).")
+                continue
+            
+            point = {
+                "type": type_point,
+                "lat": lat_f,
+                "lon": lon_f,
+                "heure": st.session_state[heure_key],
+                "titre": titre,
+                "volume": volume if volume else None
+            }
+            
+            if type_point == "sortie_decharge" and volume and volume > 0:
+                st.session_state.volume1 = volume
+                st.success(f"✅ {titre} - Volume: {volume} m³")
+            else:
+                st.success(f"✅ {titre} enregistré")
+            
+            # Calcul de la distance
+            if st.session_state.derniere_position:
+                distance = calculer_distance(
+                    st.session_state.derniere_position["lat"],
+                    st.session_state.derniere_position["lon"],
+                    lat_f, lon_f
+                )
+                st.session_state.distance_totale += distance
+                st.info(f"📏 Distance depuis dernier point: {distance:.2f} km")
+                point["distance_depuis_dernier"] = distance
+            else:
+                point["distance_depuis_dernier"] = 0
+            
+            st.session_state.derniere_position = point
+            st.session_state.points_gps.append(point)
+            st.rerun()
     
     # Validation Collecte 1
     st.markdown("---")
@@ -395,68 +439,68 @@ if st.session_state.collecte1_validee and not st.session_state.collecte2_validee
         ]
         
         for titre, type_point, heure_key in etapes2:
-            col1, col2, col3 = st.columns([2, 1, 1])
+            st.markdown(f"#### {titre}")
+            
+            dernier_point = st.session_state.derniere_position
+            centre = [dernier_point['lat'], dernier_point['lon']] if dernier_point else None
+            
+            col1, col2 = st.columns([2, 1])
             with col1:
-                st.markdown(f"**{titre}**")
-                st.caption(f"Heure: {st.session_state[heure_key]}")
+                m = folium.Map(location=centre or [15.115, -16.635], zoom_start=14)
+                m.add_child(folium.LatLngPopup())
+                folium_static(m, width=500, height=300)
+                st.caption("Cliquez sur la carte pour obtenir les coordonnées.")
             with col2:
+                lat = st.text_input("Latitude", key=f"lat_{type_point}", placeholder="Ex: 15.121048")
+                lon = st.text_input("Longitude", key=f"lon_{type_point}", placeholder="Ex: -16.686826")
                 if type_point == "sortie_decharge2":
-                    volume = st.number_input("Volume (m³)", min_value=0.0, step=0.5, key=f"vol_{type_point}", value=0.0)
+                    volume = st.number_input("📦 Volume déchargé (m³)", min_value=0.0, step=0.5, key=f"vol_{type_point}")
                 else:
                     volume = None
-            with col3:
-                if st.button(f"📍 Enregistrer", key=f"btn2_{type_point}", use_container_width=True):
-                    if st.session_state.gps_actif and st.session_state.current_gps:
-                        lat = st.session_state.current_gps['lat']
-                        lon = st.session_state.current_gps['lon']
-                        accuracy = st.session_state.current_gps['accuracy']
-                        st.success(f"📍 Position GPS utilisée (précision: {accuracy:.0f}m)")
-                    else:
-                        quartier_coords = {
-                            "NDIOP": (15.121048, -16.686826),
-                            "Lébou Est": (15.109558, -16.628958),
-                            "Lébou Ouest": (15.098159, -16.619668),
-                            "Ngaye Djitté": (15.115900, -16.632128),
-                            "HLM": (15.117350, -16.635411),
-                            "Mbambara": (15.115765, -16.632181),
-                            "Ngaye Diagne": (15.120364, -16.635608)
-                        }
-                        lat, lon = quartier_coords.get(st.session_state.quartier_nom, (15.115000, -16.635000))
-                        accuracy = 100
-                        if st.session_state.gps_actif:
-                            st.warning("⚠️ Aucune position GPS disponible. Actualisez d'abord votre position.")
-                        else:
-                            st.info("📍 GPS désactivé, utilisation des coordonnées du quartier.")
-                    
-                    point = {
-                        "type": type_point,
-                        "lat": lat,
-                        "lon": lon,
-                        "heure": st.session_state[heure_key],
-                        "titre": titre,
-                        "collecte": 2,
-                        "volume": volume if volume else None,
-                        "precision": accuracy
-                    }
-                    
-                    if type_point == "sortie_decharge2" and volume > 0:
-                        st.session_state.volume2 = volume
-                        st.success(f"✅ {titre} - Volume: {volume} m³")
-                    else:
-                        st.success(f"✅ {titre} enregistré")
-                    
-                    if st.session_state.derniere_position:
-                        distance = calculer_distance(
-                            st.session_state.derniere_position["lat"],
-                            st.session_state.derniere_position["lon"],
-                            lat, lon
-                        )
-                        st.session_state.distance_totale += distance
-                        st.info(f"📏 Distance: {distance:.2f} km")
-                    
-                    point["distance_depuis_dernier"] = distance if st.session_state.derniere_position else 0
-                    st.session_state.derniere_position = point
-                    st.session_state.points_gps.append(point)
+            
+            if st.button(f"📍 Enregistrer {titre}", key=f"btn2_{type_point}", use_container_width=True):
+                if lat and lon:
+                    try:
+                        lat_f = float(lat)
+                        lon_f = float(lon)
+                    except:
+                        st.error("Coordonnées invalides")
+                        continue
+                else:
+                    st.warning("Veuillez entrer les coordonnées.")
+                    continue
+                
+                point = {
+                    "type": type_point,
+                    "lat": lat_f,
+                    "lon": lon_f,
+                    "heure": st.session_state[heure_key],
+                    "titre": titre,
+                    "collecte": 2,
+                    "volume": volume if volume else None
+                }
+                
+                if type_point == "sortie_decharge2" and volume and volume > 0:
+                    st.session_state.volume2 = volume
+                    st.success(f"✅ {titre} - Volume: {volume} m³")
+                else:
+                    st.success(f"✅ {titre} enregistré")
+                
+                if st.session_state.derniere_position:
+                    distance = calculer_distance(
+                        st.session_state.derniere_position["lat"],
+                        st.session_state.derniere_position["lon"],
+                        lat_f, lon_f
+                    )
+                    st.session_state.distance_totale += distance
+                    st.info(f"📏 Distance: {distance:.2f} km")
+                    point["distance_depuis_dernier"] = distance
+                else:
+                    point["distance_depuis_dernier"] = 0
+                
+                st.session_state.derniere_position = point
+                st.session_state.points_gps.append(point)
+                st.rerun()
         
         st.markdown("---")
         if st.button("✅ VALIDER COLLECTE 2", type="primary", use_container_width=True):
@@ -563,7 +607,7 @@ if st.session_state.points_gps:
         lon="lon",
         color="type",
         hover_name="titre",
-        hover_data={"heure": True, "distance_depuis_dernier": True, "precision": True},
+        hover_data={"heure": True, "distance_depuis_dernier": True},
         color_discrete_map=couleurs,
         zoom=13,
         center={"lat": 15.11, "lon": -16.65},
@@ -596,9 +640,7 @@ if st.session_state.points_gps:
             st.write(f"   📍 {point['lat']:.6f}, {point['lon']:.6f}")
             if point.get('distance_depuis_dernier', 0) > 0:
                 st.write(f"   📏 Distance: {point['distance_depuis_dernier']:.2f} km")
-            if point.get('precision'):
-                st.write(f"   🎯 Précision GPS: {point['precision']:.0f} m")
 
 # ==================== FOOTER ====================
 st.markdown("---")
-st.caption(f"👤 Agent: {st.session_state.agent_nom or 'Non connecté'} | 📡 GPS: {'Actif' if st.session_state.gps_actif else 'Inactif'} | 🗑️ Commune de Mékhé")
+st.caption(f"👤 Agent: {st.session_state.agent_nom or 'Non connecté'} | 🗑️ Commune de Mékhé")
