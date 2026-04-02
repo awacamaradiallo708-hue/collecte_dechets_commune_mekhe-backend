@@ -1,12 +1,13 @@
 """
 DASHBOARD DE SUIVI DES COLLECTES - COMMUNE DE MÉKHÉ
-Version synchronisée avec l'application agent
-- Suivi quotidien, hebdomadaire, mensuel
+Version adaptée à la structure de la base de données
+- Suivi quotidien, hebdomadaire, mensuel, annuel
 - Graphiques interactifs
 - Export Excel et Word
 - Panneau d'administration
-- Rapports hebdomadaires / mensuels (HTML, imprimable en PDF)
-- Unités : mètres cubes (m³)
+- Rapports imprimables en PDF (HTML)
+- Unités : m³
+- Carte interactive avec couleur par équipe et forme par collecte
 """
 
 import streamlit as st
@@ -37,13 +38,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    .metric-card {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
     .info-box {
         background: #e3f2fd;
         padding: 1rem;
@@ -71,7 +65,7 @@ if not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-# ==================== FONCTIONS ====================
+# ==================== FONCTIONS UTILITAIRES ====================
 def haversine(lat1, lon1, lat2, lon2):
     """Distance en km entre deux points GPS"""
     R = 6371
@@ -83,7 +77,7 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c
 
 def load_all_data():
-    """Charge toutes les données de la base"""
+    """Charge les données depuis la base avec les noms de colonnes originaux"""
     with engine.connect() as conn:
         # Tournées
         query_tournees = text("""
@@ -113,7 +107,8 @@ def load_all_data():
             df['semaine'] = df['date'].dt.isocalendar().week
             df['annee'] = df['date'].dt.year
             df['mois'] = df['date'].dt.month
-            df['jour_semaine'] = df['date'].dt.day_name()
+            # Alias pour faciliter l'affichage
+            df.rename(columns={'agent_nom': 'agent', 'distance_parcourue_km': 'distance'}, inplace=True)
         
         # Points GPS
         query_points = text("""
@@ -126,119 +121,46 @@ def load_all_data():
                 pa.collecte_numero,
                 pa.description,
                 q.nom as quartier,
+                e.nom as equipe,
                 t.date_tournee
             FROM points_arret pa
             JOIN tournees t ON pa.tournee_id = t.id
             JOIN quartiers q ON t.quartier_id = q.id
+            JOIN equipes e ON t.equipe_id = e.id
             WHERE pa.latitude IS NOT NULL
             ORDER BY t.date_tournee DESC, pa.heure
         """)
         df_points = pd.read_sql(query_points, conn)
-        
         return df, df_points
 
-def exporter_excel(df, periode_type, periode_nom):
-    """Exporte les données en Excel"""
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name=f"Données_{periode_type}", index=False)
-        
-        if not df.empty:
-            synth_quartier = df.groupby('quartier').agg({
-                'volume_total': 'sum',
-                'distance': 'sum',
-                'nb_points': 'sum',
-                'id': 'count'
-            }).round(2)
-            synth_quartier.columns = ['Volume total (m³)', 'Distance (km)', 'Points GPS', 'Nombre collectes']
-            synth_quartier.to_excel(writer, sheet_name="Synthèse par quartier")
-            
-            synth_agent = df.groupby('agent').agg({
-                'volume_total': 'sum',
-                'nb_points': 'sum',
-                'id': 'count'
-            }).round(2)
-            synth_agent.columns = ['Volume total (m³)', 'Points GPS', 'Nombre collectes']
-            synth_agent.to_excel(writer, sheet_name="Synthèse par agent")
-            
-            evol_quotidienne = df.groupby('date').agg({
-                'volume_total': 'sum',
-                'distance': 'sum',
-                'id': 'count'
-            }).reset_index()
-            evol_quotidienne.columns = ['Date', 'Volume (m³)', 'Distance (km)', 'Nombre collectes']
-            evol_quotidienne.to_excel(writer, sheet_name="Évolution quotidienne", index=False)
-    
-    return output.getvalue()
+def formater_duree(minutes):
+    if minutes <= 0:
+        return "0 min"
+    h = int(minutes // 60)
+    m = int(minutes % 60)
+    return f"{h}h {m}min" if h > 0 else f"{m}min"
 
-def exporter_word(df, periode_type, periode_nom, stats):
-    """Génère un rapport Word (HTML exportable)"""
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Rapport Collectes - {periode_nom}</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-            h1 {{ color: #2E7D32; }}
-            h2 {{ color: #1B5E20; margin-top: 30px; }}
-            table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-            th {{ background-color: #2E7D32; color: white; }}
-            .metric {{ background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0; }}
-        </style>
-    </head>
-    <body>
-        <h1>📊 Rapport de suivi des collectes</h1>
-        <p><strong>Période:</strong> {periode_nom}</p>
-        <p><strong>Date d'édition:</strong> {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
-        
-        <h2>📈 Résumé général</h2>
-        表
-             <tr><th>Indicateur</th><th>Valeur</th></tr>
-             <tr><td>Nombre de tournées</td><td>{stats.get('nb_tournees', 0)}</td></tr>
-             <tr><td>Volume total collecté</td><td>{stats.get('volume_total', 0):.1f} m³</td></tr>
-             <tr><td>Distance totale parcourue</td><td>{stats.get('distance_total', 0):.1f} km</td></tr>
-             <tr><td>Nombre de quartiers visités</td><td>{stats.get('nb_quartiers', 0)}</td></tr>
-             <tr><td>Nombre d'agents actifs</td><td>{stats.get('nb_agents', 0)}</td></tr>
-             <tr><td>Quartier le plus productif</td><td>{stats.get('top_quartier', 'N/A')}</td></tr>
-         </table>
-        
-        <h2>🏘️ Répartition par quartier</h2>
-        {df.groupby('quartier').agg({'volume_total': 'sum'}).sort_values('volume_total', ascending=False).to_html()}
-        
-        <h2>👥 Performance par agent</h2>
-        {df.groupby('agent').agg({'volume_total': 'sum', 'id': 'count'}).sort_values('volume_total', ascending=False).to_html()}
-        
-        <hr>
-        <footer>Commune de Mékhé - Service de collecte des déchets<br>Rapport généré le {datetime.now().strftime('%d/%m/%Y')}</footer>
-    </body>
-    </html>
-    """
-    return html_content
-
-def generer_rapport_html(df, periode_type, periode_nom):
+def generer_rapport_html(df, periode_nom):
     """Génère un rapport HTML complet pour la période sélectionnée"""
     if df.empty:
         return "<p>Aucune donnée pour cette période.</p>"
     
-    total_volume = df['volume_total'].sum()
+    total_volume = df['volume_m3'].sum()
     total_tonnes = total_volume * 0.8
     total_distance = df['distance'].sum()
     nb_tournees = len(df)
     nb_quartiers = df['quartier'].nunique()
     nb_agents = df['agent'].nunique()
-    top_quartier = df.groupby('quartier')['volume_total'].sum().idxmax() if not df.empty else "N/A"
-    top_agent = df.groupby('agent')['volume_total'].sum().idxmax() if not df.empty else "N/A"
+    top_quartier = df.groupby('quartier')['volume_m3'].sum().idxmax() if not df.empty else "N/A"
+    top_agent = df.groupby('agent')['volume_m3'].sum().idxmax() if not df.empty else "N/A"
     
-    # Graphiques (en HTML avec Plotly)
-    evol_jour = df.groupby('date')['volume_total'].sum().reset_index()
-    fig1 = px.line(evol_jour, x='date', y='volume_total', title="Volume collecté par jour (m³)", markers=True)
+    # Graphiques
+    evol_jour = df.groupby('date')['volume_m3'].sum().reset_index()
+    fig1 = px.line(evol_jour, x='date', y='volume_m3', title="Volume collecté par jour (m³)", markers=True)
     fig1.update_layout(height=400)
     graph1_html = fig1.to_html(include_plotlyjs='cdn', div_id="graph1")
     
-    top_quartiers = df.groupby('quartier')['volume_total'].sum().sort_values(ascending=False)
+    top_quartiers = df.groupby('quartier')['volume_m3'].sum().sort_values(ascending=False)
     fig2 = px.bar(x=top_quartiers.values, y=top_quartiers.index, orientation='h',
                   title="Volume total par quartier (m³)", text=top_quartiers.values)
     fig2.update_traces(texttemplate='%{text:.1f} m³', textposition='outside')
@@ -251,7 +173,7 @@ def generer_rapport_html(df, periode_type, periode_nom):
     
     # Tableaux
     tableau_quartiers = df.groupby('quartier').agg({
-        'volume_total': 'sum',
+        'volume_m3': 'sum',
         'distance': 'sum',
         'id': 'count'
     }).round(2)
@@ -260,7 +182,7 @@ def generer_rapport_html(df, periode_type, periode_nom):
     tableau_quartiers = tableau_quartiers.sort_values('Volume (m³)', ascending=False)
     
     tableau_agents = df.groupby('agent').agg({
-        'volume_total': 'sum',
+        'volume_m3': 'sum',
         'id': 'count'
     }).round(2)
     tableau_agents.columns = ['Volume (m³)', 'Collectes']
@@ -317,7 +239,6 @@ def generer_rapport_html(df, periode_type, periode_nom):
             }}
             @media print {{
                 body {{ margin: 0; }}
-                .no-print {{ display: none; }}
             }}
         </style>
     </head>
@@ -587,7 +508,7 @@ def show_admin_panel():
                         "nb_agents": df_periode['agent_nom'].nunique(),
                         "top_quartier": df_periode.groupby('quartier')['volume_m3'].sum().idxmax()
                     }
-                    html_content = exporter_word(df_periode, "période", f"{date_debut} au {date_fin}", stats)
+                    html_content = generer_rapport_html(df_periode, f"{date_debut} au {date_fin}")
                     st.download_button("📥 Télécharger le rapport Word", data=html_content,
                                        file_name=f"rapport_synthese_{date_debut}_{date_fin}.html")
                 else:
@@ -610,11 +531,7 @@ if df_tournees.empty:
 # ==================== BARRE LATÉRALE ====================
 with st.sidebar:
     st.header("🎛️ Filtres")
-    
-    periode = st.selectbox(
-        "Période d'analyse",
-        ["Aujourd'hui", "Cette semaine", "Ce mois", "Personnalisé"]
-    )
+    periode = st.selectbox("Période d'analyse", ["Aujourd'hui", "Cette semaine", "Ce mois", "Personnalisé"])
     
     if periode == "Aujourd'hui":
         date_filter = st.date_input("Date", value=date.today())
@@ -643,52 +560,27 @@ with st.sidebar:
     st.markdown("---")
     quartiers = st.multiselect("Quartiers", df_filtered['quartier'].unique(), default=df_filtered['quartier'].unique())
     agents = st.multiselect("Agents", df_filtered['agent'].unique(), default=df_filtered['agent'].unique())
-    
     df_filtered = df_filtered[df_filtered['quartier'].isin(quartiers)]
     df_filtered = df_filtered[df_filtered['agent'].isin(agents)]
 
-# Filtrer les points GPS en fonction des tournées sélectionnées
+# Filtrer les points GPS
 ids_tournees = df_filtered['id'].tolist()
 df_points_filtre = df_points[df_points['tournee_id'].isin(ids_tournees)]
 
 # ==================== ONGLETS ====================
-tabs = st.tabs([
-    "📈 Tableau de bord",
-    "🥇 Classements",
-    "🗺️ Carte",
-    "📋 Détails",
-    "🔧 Administration",
-    "📊 Rapports"   # <-- Nouvel onglet
-])
+tabs = st.tabs(["📈 Tableau de bord", "🥇 Classements", "🗺️ Carte", "📋 Détails", "📊 Rapports"])
 
 # ==================== TAB 1 : TABLEAU DE BORD ====================
 with tabs[0]:
     st.subheader(f"📅 Période : {periode_nom}")
     if not df_filtered.empty:
-        total_volume = df_filtered['volume_total'].sum()
+        total_volume = df_filtered['volume_m3'].sum()
         total_distance = df_filtered['distance'].sum()
         nb_tournees = len(df_filtered)
         nb_quartiers = df_filtered['quartier'].nunique()
         nb_agents = df_filtered['agent'].nunique()
-        # Durée moyenne
-        def parse_time(t):
-            if t and isinstance(t, str):
-                try:
-                    return datetime.strptime(t, "%H:%M:%S").time()
-                except:
-                    return None
-            return None
-        durees = []
-        for _, row in df_filtered.iterrows():
-            depart = parse_time(row['depart'])
-            retour = parse_time(row['retour'])
-            if depart and retour:
-                minutes = (retour.hour*60 + retour.minute) - (depart.hour*60 + depart.minute)
-                if minutes > 0:
-                    durees.append(minutes)
-        duree_moy = sum(durees)/len(durees) if durees else 0
         
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("📦 Volume total", f"{total_volume:.1f} m³")
             st.caption(f"≈ {total_volume * 0.8:.0f} tonnes")
@@ -700,21 +592,17 @@ with tabs[0]:
             st.metric("🏘️ Quartiers", nb_quartiers)
         with col5:
             st.metric("👥 Agents", nb_agents)
-        with col6:
-            st.metric("⏱️ Durée moyenne", f"{duree_moy:.0f} min" if duree_moy else "N/A")
         
         if total_volume > 0:
-            efficacite = total_distance / total_volume
-            st.info(f"📊 **Efficacité globale :** {efficacite:.2f} km par m³ collecté")
+            st.info(f"📊 **Efficacité globale :** {total_distance/total_volume:.2f} km/m³")
         
         st.markdown("---")
-        
-        evol_journaliere = df_filtered.groupby('date')['volume_total'].sum().reset_index()
-        fig_evol = px.line(evol_journaliere, x='date', y='volume_total', title="Volume collecté par jour (m³)", markers=True)
+        evol_journaliere = df_filtered.groupby('date')['volume_m3'].sum().reset_index()
+        fig_evol = px.line(evol_journaliere, x='date', y='volume_m3', title="Volume collecté par jour (m³)", markers=True)
         st.plotly_chart(fig_evol, use_container_width=True)
         
-        evol_quartier = df_filtered.groupby(['date', 'quartier'])['volume_total'].sum().reset_index()
-        fig_quartier = px.line(evol_quartier, x='date', y='volume_total', color='quartier', title="Évolution par quartier (m³)", markers=True)
+        evol_quartier = df_filtered.groupby(['date', 'quartier'])['volume_m3'].sum().reset_index()
+        fig_quartier = px.line(evol_quartier, x='date', y='volume_m3', color='quartier', title="Évolution par quartier (m³)", markers=True)
         fig_quartier.update_layout(height=500)
         st.plotly_chart(fig_quartier, use_container_width=True)
     else:
@@ -722,17 +610,17 @@ with tabs[0]:
 
 # ==================== TAB 2 : CLASSEMENTS ====================
 with tabs[1]:
-    st.subheader("🥇 Classements et performances")
+    st.subheader("🥇 Classements")
     if not df_filtered.empty:
         col1, col2 = st.columns(2)
         with col1:
-            top_quartiers = df_filtered.groupby('quartier')['volume_total'].sum().sort_values(ascending=True)
+            top_quartiers = df_filtered.groupby('quartier')['volume_m3'].sum().sort_values(ascending=True)
             fig_quartiers = px.bar(x=top_quartiers.values, y=top_quartiers.index, orientation='h',
                                    title="Volume total par quartier (m³)", text=top_quartiers.values)
             fig_quartiers.update_traces(texttemplate='%{text:.1f} m³', textposition='outside')
             st.plotly_chart(fig_quartiers, use_container_width=True)
         with col2:
-            top_agents = df_filtered.groupby('agent')['volume_total'].sum().sort_values(ascending=True)
+            top_agents = df_filtered.groupby('agent')['volume_m3'].sum().sort_values(ascending=True)
             fig_agents = px.bar(x=top_agents.values, y=top_agents.index, orientation='h',
                                 title="Volume total par agent (m³)", text=top_agents.values)
             fig_agents.update_traces(texttemplate='%{text:.1f} m³', textposition='outside')
@@ -740,29 +628,27 @@ with tabs[1]:
         
         col1, col2 = st.columns(2)
         with col1:
-            fig_pie = px.pie(df_filtered, values='volume_total', names='quartier', title="Répartition des volumes", hole=0.3)
+            fig_pie = px.pie(df_filtered, values='volume_m3', names='quartier', title="Répartition des volumes", hole=0.3)
             st.plotly_chart(fig_pie, use_container_width=True)
         with col2:
             perf_df = df_filtered.groupby('quartier').agg({
-                'volume_total': 'sum', 'distance': 'sum', 'id': 'count', 'nb_points': 'sum'
+                'volume_m3': 'sum', 'distance': 'sum', 'id': 'count', 'nb_points': 'sum'
             }).round(2)
             perf_df.columns = ['Volume (m³)', 'Distance (km)', 'Collectes', 'Points GPS']
             perf_df = perf_df.sort_values('Volume (m³)', ascending=False)
             st.dataframe(perf_df, use_container_width=True)
     else:
-        st.info("Aucune donnée disponible")
+        st.info("Aucune donnée")
 
-# ==================== TAB 3 : CARTE (CORRIGÉE) ====================
+# ==================== TAB 3 : CARTE ====================
 with tabs[2]:
     st.subheader("🗺️ Carte des points de collecte")
     
     if not df_points_filtre.empty:
-        # --- CORRECTION : Gérer les valeurs manquantes dans la colonne 'equipe' ---
-        if 'equipe' in df_points_filtre.columns:
-            df_points_filtre['equipe'] = df_points_filtre['equipe'].fillna("Sans équipe").astype(str)
-        else:
+        # Vérifier la présence de la colonne équipe
+        if 'equipe' not in df_points_filtre.columns:
+            st.warning("Les données ne contiennent pas d'information sur les équipes. Affichage sans couleur.")
             df_points_filtre['equipe'] = "Inconnue"
-        # -----------------------------------------------------------------
         
         collecte_filtre = st.radio("Afficher les points de :", ["Toutes", "Collecte 1", "Collecte 2"], horizontal=True)
         if collecte_filtre == "Collecte 1":
@@ -787,60 +673,36 @@ with tabs[2]:
             equipes = df_carte['equipe'].unique()
             palette = px.colors.qualitative.Plotly
             color_map = {e: palette[i % len(palette)] for i, e in enumerate(equipes)}
-           # Au lieu de px.scatter_mapbox, on construit la figure manuellement
-fig = go.Figure()
-
-# Ajouter les traces pour chaque équipe (pour avoir une couleur par équipe)
-for equipe, group in df_carte.groupby('equipe'):
-    # Définir le symbole selon collecte_numero
-    marker_symbol = group['collecte_numero'].apply(lambda x: 'circle' if x == 1 else 'square')
-    # On ne peut pas mélanger les symboles dans une même trace facilement, donc on sépare par symbole
-    for symb, sub_group in group.groupby(marker_symbol):
-        # Nom de la trace : équipe + symbole
-        trace_name = f"{equipe} - {'Collecte 1' if symb == 'circle' else 'Collecte 2'}"
-        fig.add_trace(go.Scattermapbox(
-            lat=sub_group['latitude'],
-            lon=sub_group['longitude'],
-            mode='markers',
-            marker=dict(
-                size=10,
-                symbol=symb,  # 'circle' ou 'square'
-                color=color_map.get(equipe, 'blue')
-            ),
-            text=sub_group['nom_affichage'],
-            hoverinfo='text',
-            name=trace_name,
-            showlegend=True
-        ))
-
-# Ajouter les lignes (trajets)
-for tid in df_carte['tournee_id'].unique():
-    df_tour = df_carte[df_carte['tournee_id'] == tid].sort_values('heure')
-    if len(df_tour) > 1:
-        equipe_tour = df_tour.iloc[0]['equipe']
-        couleur_ligne = color_map.get(equipe_tour, 'blue')
-        fig.add_trace(go.Scattermapbox(
-            lat=df_tour['latitude'].tolist(),
-            lon=df_tour['longitude'].tolist(),
-            mode='lines',
-            line=dict(width=2, color=couleur_ligne),
-            name=f'Trajet {equipe_tour} (tournée {tid})',
-            showlegend=False
-        ))
-
-# Mise en page
-fig.update_layout(
-    mapbox=dict(
-        style="open-street-map",
-        center=dict(lat=15.11, lon=-16.65),
-        zoom=12
-    ),
-    title="Points GPS (couleur = équipe, forme = collecte 1/2)",
-    height=550,
-    margin=dict(r=0, l=0, t=40, b=0)
-)
-
-st.plotly_chart(fig, use_container_width=True)
+            
+            fig = px.scatter_mapbox(
+                df_carte, lat="latitude", lon="longitude",
+                color="equipe",
+                symbol="symbole",
+                hover_name="nom_affichage",
+                hover_data={"quartier": True, "collecte_numero": True, "heure": True},
+                color_discrete_map=color_map,
+                zoom=12, center={"lat": 15.11, "lon": -16.65},
+                title="Points GPS (couleur = équipe, forme = collecte 1/2)",
+                height=550
+            )
+            
+            # Lignes entre points consécutifs
+            for tid in df_carte['tournee_id'].unique():
+                df_tour = df_carte[df_carte['tournee_id'] == tid].sort_values('heure')
+                if len(df_tour) > 1:
+                    equipe_tour = df_tour.iloc[0]['equipe']
+                    couleur_ligne = color_map.get(equipe_tour, 'blue')
+                    fig.add_trace(go.Scattermapbox(
+                        lat=df_tour['latitude'].tolist(),
+                        lon=df_tour['longitude'].tolist(),
+                        mode='lines',
+                        line=dict(width=2, color=couleur_ligne),
+                        name=f'Trajet {equipe_tour} (tournée {tid})',
+                        showlegend=False
+                    ))
+            
+            fig.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":40,"l":0,"b":0})
+            st.plotly_chart(fig, use_container_width=True)
             
             # Distances
             st.subheader("📏 Distances entre points consécutifs")
@@ -868,25 +730,25 @@ st.plotly_chart(fig, use_container_width=True)
             st.info("Aucun point GPS pour la collecte sélectionnée")
     else:
         st.info("Aucun point GPS enregistré pour la période")
-        
+
 # ==================== TAB 4 : DÉTAILS ====================
 with tabs[3]:
     st.subheader("📋 Détail des collectes")
     if not df_filtered.empty:
         display_df = df_filtered.copy()
         display_df['date'] = display_df['date'].dt.strftime('%d/%m/%Y')
-        display_df['volume_total'] = display_df['volume_total'].apply(lambda x: f"{x:.1f} m³")
+        display_df['volume_m3'] = display_df['volume_m3'].apply(lambda x: f"{x:.1f} m³")
         display_df['distance'] = display_df['distance'].apply(lambda x: f"{x:.1f} km")
-        display_df['volume1'] = display_df['volume1'].apply(lambda x: f"{x:.1f} m³")
-        display_df['volume2'] = display_df['volume2'].apply(lambda x: f"{x:.1f} m³")
+        display_df['volume_collecte1'] = display_df['volume_collecte1'].apply(lambda x: f"{x:.1f} m³")
+        display_df['volume_collecte2'] = display_df['volume_collecte2'].apply(lambda x: f"{x:.1f} m³")
         
         st.dataframe(
-            display_df[['date', 'quartier', 'agent', 'equipe', 'volume1', 'volume2', 'volume_total', 'distance', 'nb_points']],
+            display_df[['date', 'quartier', 'agent', 'equipe', 'volume_collecte1', 'volume_collecte2', 'volume_m3', 'distance', 'nb_points']],
             use_container_width=True,
             column_config={
                 "date": "Date", "quartier": "Quartier", "agent": "Agent", "equipe": "Équipe",
-                "volume1": "Volume 1", "volume2": "Volume 2", "volume_total": "Volume total",
-                "distance": "Distance", "nb_points": "Points GPS"
+                "volume_collecte1": "Volume 1", "volume_collecte2": "Volume 2",
+                "volume_m3": "Volume total", "distance": "Distance", "nb_points": "Points GPS"
             }
         )
         
@@ -894,68 +756,49 @@ with tabs[3]:
         st.subheader("📥 Export des données")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📊 EXPORTER EN EXCEL", use_container_width=True, type="primary"):
-                excel_data = exporter_excel(df_filtered, periode, periode_nom)
-                st.download_button(
-                    label="📥 Télécharger Excel",
-                    data=excel_data,
-                    file_name=f"rapport_collectes_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        with col2:
-            if st.button("📄 EXPORTER EN WORD", use_container_width=True):
-                stats = {
-                    "nb_tournees": len(df_filtered),
-                    "volume_total": df_filtered['volume_total'].sum(),
-                    "distance_total": df_filtered['distance'].sum(),
-                    "nb_quartiers": df_filtered['quartier'].nunique(),
-                    "nb_agents": df_filtered['agent'].nunique(),
-                    "top_quartier": df_filtered.groupby('quartier')['volume_total'].sum().idxmax() if not df_filtered.empty else "N/A"
-                }
-                html_content = exporter_word(df_filtered, periode, periode_nom, stats)
-                st.download_button(
-                    label="📥 Télécharger Word",
-                    data=html_content,
-                    file_name=f"rapport_collectes_{datetime.now().strftime('%Y%m%d')}.html",
-                    mime="text/html"
-                )
+            if st.button("📊 EXPORTER EN EXCEL", use_container_width=True):
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    display_df.to_excel(writer, sheet_name="Collectes", index=False)
+                st.download_button("📥 Télécharger Excel", data=output.getvalue(),
+                                   file_name=f"collectes_{datetime.now().strftime('%Y%m%d')}.xlsx")
     else:
-        st.info("Aucune donnée pour la période sélectionnée")
+        st.info("Aucune donnée pour cette période")
 
-# ==================== TAB 5 : ADMINISTRATION ====================
+# ==================== TAB 5 : RAPPORTS ====================
 with tabs[4]:
-    show_admin_panel()
-
-# ==================== TAB 6 : RAPPORTS HEBDOMADAIRES / MENSUELS ====================
-with tabs[5]:
-    st.subheader("📊 Génération de rapports hebdomadaires / mensuels")
+    st.subheader("📊 Génération de rapports (PDF imprimable)")
     col1, col2 = st.columns(2)
     with col1:
-        type_rapport = st.selectbox("Type de rapport", ["Hebdomadaire", "Mensuel"])
+        type_rapport = st.selectbox("Type de rapport", ["Hebdomadaire", "Mensuel", "Annuel"])
     with col2:
         if type_rapport == "Hebdomadaire":
             annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
             semaine = st.selectbox("Semaine", sorted(df_tournees[df_tournees['annee']==annee]['semaine'].unique()))
             df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['semaine'] == semaine)]
             periode_nom_rapport = f"Semaine {semaine} - {annee}"
-        else:
+        elif type_rapport == "Mensuel":
             annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
             mois = st.selectbox("Mois", sorted(df_tournees[df_tournees['annee']==annee]['mois'].unique()))
             nom_mois = calendar.month_name[mois]
             df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['mois'] == mois)]
             periode_nom_rapport = f"{nom_mois} {annee}"
+        else:
+            annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
+            df_rapport = df_tournees[df_tournees['annee'] == annee]
+            periode_nom_rapport = f"Année {annee}"
     
     if not df_rapport.empty:
         st.info(f"**{len(df_rapport)} tournée(s)** trouvée(s) pour la période")
         if st.button("📥 Générer le rapport HTML", use_container_width=True):
-            html_content = generer_rapport_html(df_rapport, type_rapport, periode_nom_rapport)
+            html_content = generer_rapport_html(df_rapport, periode_nom_rapport)
             st.download_button(
                 label="📄 Télécharger le rapport (HTML)",
                 data=html_content,
                 file_name=f"rapport_collectes_{periode_nom_rapport.replace(' ', '_')}.html",
                 mime="text/html"
             )
-            st.success("Rapport généré ! Ouvrez-le dans votre navigateur et imprimez-le en PDF (Ctrl+P → Enregistrer en PDF).")
+            st.success("Rapport généré ! Ouvrez-le dans votre navigateur, puis utilisez Ctrl+P pour l'enregistrer en PDF.")
     else:
         st.warning("Aucune donnée pour la période sélectionnée")
 
