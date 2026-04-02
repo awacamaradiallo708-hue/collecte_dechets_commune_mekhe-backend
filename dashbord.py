@@ -788,17 +788,17 @@ with tabs[2]:
             palette = px.colors.qualitative.Plotly
             color_map = {e: palette[i % len(palette)] for i, e in enumerate(equipes)}
             
-            fig = px.scatter_mapbox(
-                df_carte, lat="latitude", lon="longitude",
-                color="equipe",
-                symbol="symbole",
-                hover_name="nom_affichage",
-                hover_data={"quartier": True, "collecte_numero": True, "heure": True},
-                color_discrete_map=color_map,
-                zoom=12, center={"lat": 15.11, "lon": -16.65},
-                title="Points GPS (couleur = équipe, forme = collecte 1/2)",
-                height=550
-            )
+           fig = px.scatter_mapbox(
+               df_carte, lat="latitude", lon="longitude",
+               color="equipe",
+               # symbol="symbole",   # <-- à supprimer (non supporté)
+               hover_name="nom_affichage",
+               hover_data={"quartier": True, "collecte_numero": True, "heure": True},
+               color_discrete_map=color_map,
+               zoom=12, center={"lat": 15.11, "lon": -16.65},
+               title="Points GPS (couleur = équipe)",
+               height=550
+           )
             
             # Lignes entre points consécutifs
             for tid in df_carte['tournee_id'].unique():
