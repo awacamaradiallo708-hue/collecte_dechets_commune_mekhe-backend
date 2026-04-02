@@ -145,7 +145,6 @@ def generer_rapport_html(df, periode_nom):
     if df.empty:
         return "<p>Aucune donnée pour cette période.</p>"
     
-    # Indicateurs
     total_volume = df['volume_m3'].sum()
     total_tonnes = total_volume * 0.8
     total_distance = df['distance'].sum()
@@ -155,13 +154,12 @@ def generer_rapport_html(df, periode_nom):
     top_quartier = df.groupby('quartier')['volume_m3'].sum().idxmax() if not df.empty else "N/A"
     top_agent = df.groupby('agent')['volume_m3'].sum().idxmax() if not df.empty else "N/A"
     
-    # Évolution quotidienne
+    # Graphiques
     evol_jour = df.groupby('date')['volume_m3'].sum().reset_index()
     fig1 = px.line(evol_jour, x='date', y='volume_m3', title="Volume collecté par jour (m³)", markers=True)
     fig1.update_layout(height=400)
     graph1_html = fig1.to_html(include_plotlyjs='cdn', div_id="graph1")
     
-    # Volume par quartier (barres horizontales)
     top_quartiers = df.groupby('quartier')['volume_m3'].sum().sort_values(ascending=False)
     fig2 = px.bar(x=top_quartiers.values, y=top_quartiers.index, orientation='h',
                   title="Volume total par quartier (m³)", text=top_quartiers.values)
@@ -169,7 +167,6 @@ def generer_rapport_html(df, periode_nom):
     fig2.update_layout(height=400)
     graph2_html = fig2.to_html(include_plotlyjs='cdn', div_id="graph2")
     
-    # Camembert
     fig3 = px.pie(values=top_quartiers.values, names=top_quartiers.index, title="Répartition des volumes")
     fig3.update_traces(textinfo='percent+label')
     graph3_html = fig3.to_html(include_plotlyjs='cdn', div_id="graph3")
@@ -192,7 +189,6 @@ def generer_rapport_html(df, periode_nom):
     tableau_agents['Tonnes'] = (tableau_agents['Volume (m³)'] * 0.8).round(1)
     tableau_agents = tableau_agents.sort_values('Volume (m³)', ascending=False)
     
-    # Construction du HTML
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -646,15 +642,15 @@ with tabs[1]:
 
 # ==================== TAB 3 : CARTE (CORRIGÉE) ====================
 with tabs[2]:
-    st.subheader("🗺️ Carte des points de collecte par équipe")
+    st.subheader("🗺️ Carte des points de collecte")
     
     if not df_points_filtre.empty:
-        # Récupérer la liste des équipes et leur assigner une couleur
-        equipes_list = df_points_filtre['equipe'].unique()
-        palette = px.colors.qualitative.Plotly
-        couleur_par_equipe = {equipe: palette[i % len(palette)] for i, equipe in enumerate(equipes_list)}
+        # Vérifier la présence de la colonne équipe
+        if 'equipe' not in df_points_filtre.columns:
+            st.warning("Les données ne contiennent pas d'information sur les équipes. Affichage sans couleur.")
+            # Créer une colonne factice
+            df_points_filtre['equipe'] = "Inconnue"
         
-        # Choix du type de collecte à afficher
         collecte_filtre = st.radio("Afficher les points de :", ["Toutes", "Collecte 1", "Collecte 2"], horizontal=True)
         if collecte_filtre == "Collecte 1":
             df_carte = df_points_filtre[df_points_filtre['collecte_numero'] == 1]
@@ -664,7 +660,7 @@ with tabs[2]:
             df_carte = df_points_filtre
         
         if not df_carte.empty:
-            # Définir les noms des points pour l'affichage
+            # Définir les noms des points
             noms_points = {
                 "depart_depot": "🏭 Départ dépôt", "debut_collecte": "🗑️ Début collecte",
                 "fin_collecte": "🗑️ Fin collecte", "depart_decharge": "🚛 Départ décharge",
@@ -672,29 +668,31 @@ with tabs[2]:
                 "retour_depot": "🏁 Retour dépôt", "point_libre": "📍 Point libre"
             }
             df_carte["nom_affichage"] = df_carte["type_point"].map(noms_points)
-            
-            # Symbole différent selon le numéro de collecte (1 = cercle, 2 = carré)
             df_carte['symbole'] = df_carte['collecte_numero'].apply(lambda x: 'circle' if x == 1 else 'square')
             
-            # Créer la figure
+            # Palette de couleurs par équipe
+            equipes = df_carte['equipe'].unique()
+            palette = px.colors.qualitative.Plotly
+            color_map = {e: palette[i % len(palette)] for i, e in enumerate(equipes)}
+            
             fig = px.scatter_mapbox(
                 df_carte, lat="latitude", lon="longitude",
                 color="equipe",
                 symbol="symbole",
                 hover_name="nom_affichage",
                 hover_data={"quartier": True, "collecte_numero": True, "heure": True},
-                color_discrete_map=couleur_par_equipe,
+                color_discrete_map=color_map,
                 zoom=12, center={"lat": 15.11, "lon": -16.65},
-                title="Itinéraire des tournées (couleur = équipe, forme = collecte 1/2)",
+                title="Points GPS (couleur = équipe, forme = collecte 1/2)",
                 height=550
             )
             
-            # Tracer les lignes entre points consécutifs par tournée
+            # Lignes entre points consécutifs
             for tid in df_carte['tournee_id'].unique():
                 df_tour = df_carte[df_carte['tournee_id'] == tid].sort_values('heure')
                 if len(df_tour) > 1:
                     equipe_tour = df_tour.iloc[0]['equipe']
-                    couleur_ligne = couleur_par_equipe.get(equipe_tour, 'blue')
+                    couleur_ligne = color_map.get(equipe_tour, 'blue')
                     fig.add_trace(go.Scattermapbox(
                         lat=df_tour['latitude'].tolist(),
                         lon=df_tour['longitude'].tolist(),
@@ -707,7 +705,7 @@ with tabs[2]:
             fig.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":40,"l":0,"b":0})
             st.plotly_chart(fig, use_container_width=True)
             
-            # Détail des distances
+            # Distances
             st.subheader("📏 Distances entre points consécutifs")
             distances = []
             for tid in df_carte['tournee_id'].unique():
@@ -755,7 +753,6 @@ with tabs[3]:
             }
         )
         
-        # Export Excel (simple)
         st.markdown("---")
         st.subheader("📥 Export des données")
         col1, col2 = st.columns(2)
@@ -769,7 +766,7 @@ with tabs[3]:
     else:
         st.info("Aucune donnée pour cette période")
 
-# ==================== TAB 5 : RAPPORTS (HEBDOMADAIRES / MENSUELS / ANNUELS) ====================
+# ==================== TAB 5 : RAPPORTS ====================
 with tabs[4]:
     st.subheader("📊 Génération de rapports (PDF imprimable)")
     col1, col2 = st.columns(2)
@@ -787,7 +784,7 @@ with tabs[4]:
             nom_mois = calendar.month_name[mois]
             df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['mois'] == mois)]
             periode_nom_rapport = f"{nom_mois} {annee}"
-        else:  # Annuel
+        else:
             annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
             df_rapport = df_tournees[df_tournees['annee'] == annee]
             periode_nom_rapport = f"Année {annee}"
