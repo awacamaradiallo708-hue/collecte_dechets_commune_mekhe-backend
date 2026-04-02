@@ -787,35 +787,60 @@ with tabs[2]:
             equipes = df_carte['equipe'].unique()
             palette = px.colors.qualitative.Plotly
             color_map = {e: palette[i % len(palette)] for i, e in enumerate(equipes)}
-            
-           fig = px.scatter_mapbox(
-               df_carte, lat="latitude", lon="longitude",
-               color="equipe",
-               hover_name="nom_affichage",
-               hover_data={"quartier": True, "collecte_numero": True, "heure": True},
-               color_discrete_map=color_map,
-               zoom=12, center={"lat": 15.11, "lon": -16.65},
-               title="Points GPS (couleur = équipe)",
-               height=550
-           )
-            
-            # Lignes entre points consécutifs
-            for tid in df_carte['tournee_id'].unique():
-                df_tour = df_carte[df_carte['tournee_id'] == tid].sort_values('heure')
-                if len(df_tour) > 1:
-                    equipe_tour = df_tour.iloc[0]['equipe']
-                    couleur_ligne = color_map.get(equipe_tour, 'blue')
-                    fig.add_trace(go.Scattermapbox(
-                        lat=df_tour['latitude'].tolist(),
-                        lon=df_tour['longitude'].tolist(),
-                        mode='lines',
-                        line=dict(width=2, color=couleur_ligne),
-                        name=f'Trajet {equipe_tour} (tournée {tid})',
-                        showlegend=False
-                    ))
-            
-            fig.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":40,"l":0,"b":0})
-            st.plotly_chart(fig, use_container_width=True)
+           # Au lieu de px.scatter_mapbox, on construit la figure manuellement
+fig = go.Figure()
+
+# Ajouter les traces pour chaque équipe (pour avoir une couleur par équipe)
+for equipe, group in df_carte.groupby('equipe'):
+    # Définir le symbole selon collecte_numero
+    marker_symbol = group['collecte_numero'].apply(lambda x: 'circle' if x == 1 else 'square')
+    # On ne peut pas mélanger les symboles dans une même trace facilement, donc on sépare par symbole
+    for symb, sub_group in group.groupby(marker_symbol):
+        # Nom de la trace : équipe + symbole
+        trace_name = f"{equipe} - {'Collecte 1' if symb == 'circle' else 'Collecte 2'}"
+        fig.add_trace(go.Scattermapbox(
+            lat=sub_group['latitude'],
+            lon=sub_group['longitude'],
+            mode='markers',
+            marker=dict(
+                size=10,
+                symbol=symb,  # 'circle' ou 'square'
+                color=color_map.get(equipe, 'blue')
+            ),
+            text=sub_group['nom_affichage'],
+            hoverinfo='text',
+            name=trace_name,
+            showlegend=True
+        ))
+
+# Ajouter les lignes (trajets)
+for tid in df_carte['tournee_id'].unique():
+    df_tour = df_carte[df_carte['tournee_id'] == tid].sort_values('heure')
+    if len(df_tour) > 1:
+        equipe_tour = df_tour.iloc[0]['equipe']
+        couleur_ligne = color_map.get(equipe_tour, 'blue')
+        fig.add_trace(go.Scattermapbox(
+            lat=df_tour['latitude'].tolist(),
+            lon=df_tour['longitude'].tolist(),
+            mode='lines',
+            line=dict(width=2, color=couleur_ligne),
+            name=f'Trajet {equipe_tour} (tournée {tid})',
+            showlegend=False
+        ))
+
+# Mise en page
+fig.update_layout(
+    mapbox=dict(
+        style="open-street-map",
+        center=dict(lat=15.11, lon=-16.65),
+        zoom=12
+    ),
+    title="Points GPS (couleur = équipe, forme = collecte 1/2)",
+    height=550,
+    margin=dict(r=0, l=0, t=40, b=0)
+)
+
+st.plotly_chart(fig, use_container_width=True)
             
             # Distances
             st.subheader("📏 Distances entre points consécutifs")
