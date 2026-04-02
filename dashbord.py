@@ -791,7 +791,6 @@ with tabs[2]:
            fig = px.scatter_mapbox(
                df_carte, lat="latitude", lon="longitude",
                color="equipe",
-               # symbol="symbole",   # <-- à supprimer (non supporté)
                hover_name="nom_affichage",
                hover_data={"quartier": True, "collecte_numero": True, "heure": True},
                color_discrete_map=color_map,
