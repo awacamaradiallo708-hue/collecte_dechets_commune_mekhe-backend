@@ -759,28 +759,92 @@ with tabs[3]:
 # ==================== TAB 5 : RAPPORTS ====================
 with tabs[4]:
     st.subheader("📊 Génération de rapports (PDF imprimable)")
+    
+    # Créer une liste des semaines disponibles à partir des dates
+    df_tournees['date'] = pd.to_datetime(df_tournees['date_tournee'])
+    df_tournees['semaine_num'] = df_tournees['date'].dt.isocalendar().week
+    df_tournees['annee_num'] = df_tournees['date'].dt.year
+    
+    # Obtenir toutes les combinaisons année-semaine uniques
+    semaines_disponibles = df_tournees[['annee_num', 'semaine_num']].drop_duplicates().sort_values(['annee_num', 'semaine_num']).values.tolist()
+    
     col1, col2 = st.columns(2)
     with col1:
         type_rapport = st.selectbox("Type de rapport", ["Hebdomadaire", "Mensuel", "Annuel"])
-    with col2:
-        if type_rapport == "Hebdomadaire":
-            annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
-            semaine = st.selectbox("Semaine", sorted(df_tournees[df_tournees['annee']==annee]['semaine'].unique()))
-            df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['semaine'] == semaine)]
+    
+    if type_rapport == "Hebdomadaire":
+        col1, col2 = st.columns(2)
+        with col1:
+            # Sélection de l'année
+            annees = sorted(df_tournees['annee'].unique(), reverse=True)
+            if not annees:
+                annees = [date.today().year]
+            annee = st.selectbox("Année", annees)
+        with col2:
+            # Générer les semaines de l'année (1 à 52) et les marquer comme disponibles ou non
+            toutes_semaines = list(range(1, 53))
+            semaines_avec_donnees = df_tournees[df_tournees['annee'] == annee]['semaine'].unique()
+            
+            # Créer des libellés avec indicateur de données
+            options_semaines = []
+            for s in toutes_semaines:
+                if s in semaines_avec_donnees:
+                    options_semaines.append(f"Semaine {s} (avec données)")
+                else:
+                    options_semaines.append(f"Semaine {s} (vide)")
+            
+            semaine_idx = st.selectbox("Semaine", range(len(options_semaines)), format_func=lambda i: options_semaines[i])
+            semaine = toutes_semaines[semaine_idx]
             periode_nom_rapport = f"Semaine {semaine} - {annee}"
-        elif type_rapport == "Mensuel":
-            annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
-            mois = st.selectbox("Mois", sorted(df_tournees[df_tournees['annee']==annee]['mois'].unique()))
+            
+            # Filtrer les données
+            df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['semaine'] == semaine)]
+        
+    elif type_rapport == "Mensuel":
+        col1, col2 = st.columns(2)
+        with col1:
+            annees = sorted(df_tournees['annee'].unique(), reverse=True)
+            if not annees:
+                annees = [date.today().year]
+            annee = st.selectbox("Année", annees)
+        with col2:
+            mois_options = list(range(1, 13))
+            mois_avec_donnees = df_tournees[df_tournees['annee'] == annee]['mois'].unique()
+            
+            options_mois = []
+            for m in mois_options:
+                if m in mois_avec_donnees:
+                    options_mois.append(f"{calendar.month_name[m]} (avec données)")
+                else:
+                    options_mois.append(f"{calendar.month_name[m]} (vide)")
+            
+            mois_idx = st.selectbox("Mois", range(len(options_mois)), format_func=lambda i: options_mois[i])
+            mois = mois_options[mois_idx]
             nom_mois = calendar.month_name[mois]
-            df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['mois'] == mois)]
             periode_nom_rapport = f"{nom_mois} {annee}"
-        else:
-            annee = st.selectbox("Année", sorted(df_tournees['annee'].unique(), reverse=True))
-            df_rapport = df_tournees[df_tournees['annee'] == annee]
-            periode_nom_rapport = f"Année {annee}"
+            
+            df_rapport = df_tournees[(df_tournees['annee'] == annee) & (df_tournees['mois'] == mois)]
+    
+    else:  # Annuel
+        annees = sorted(df_tournees['annee'].unique(), reverse=True)
+        if not annees:
+            annees = [date.today().year]
+        annee = st.selectbox("Année", annees)
+        periode_nom_rapport = f"Année {annee}"
+        df_rapport = df_tournees[df_tournees['annee'] == annee]
     
     if not df_rapport.empty:
         st.info(f"**{len(df_rapport)} tournée(s)** trouvée(s) pour la période")
+        
+        # Afficher un résumé rapide
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📦 Volume total", f"{df_rapport['volume_m3'].sum():.1f} m³")
+        with col2:
+            st.metric("📏 Distance totale", f"{df_rapport['distance'].sum():.1f} km")
+        with col3:
+            st.metric("🚛 Nombre de tournées", len(df_rapport))
+        
         if st.button("📥 Générer le rapport HTML", use_container_width=True):
             html_content = generer_rapport_html(df_rapport, periode_nom_rapport)
             st.download_button(
@@ -791,8 +855,5 @@ with tabs[4]:
             )
             st.success("Rapport généré ! Ouvrez-le dans votre navigateur, puis utilisez Ctrl+P pour l'enregistrer en PDF.")
     else:
-        st.warning("Aucune donnée pour la période sélectionnée")
-
-# ==================== FOOTER ====================
-st.markdown("---")
-st.caption(f"📊 Dernière mise à jour: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} | Données en temps réel | Unité : m³ | Commune de Mékhé")
+        st.warning(f"Aucune donnée pour la période sélectionnée ({periode_nom_rapport})")
+        st.info("💡 Vous pouvez quand même générer un rapport vide ou sélectionner une autre période.")
