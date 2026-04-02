@@ -752,11 +752,18 @@ with tabs[1]:
     else:
         st.info("Aucune donnée disponible")
 
-# ==================== TAB 3 : CARTE ====================
+# ==================== TAB 3 : CARTE (CORRIGÉE) ====================
 with tabs[2]:
     st.subheader("🗺️ Carte des points de collecte")
+    
     if not df_points_filtre.empty:
-        # Filtre par collecte
+        # --- CORRECTION : Gérer les valeurs manquantes dans la colonne 'equipe' ---
+        if 'equipe' in df_points_filtre.columns:
+            df_points_filtre['equipe'] = df_points_filtre['equipe'].fillna("Sans équipe").astype(str)
+        else:
+            df_points_filtre['equipe'] = "Inconnue"
+        # -----------------------------------------------------------------
+        
         collecte_filtre = st.radio("Afficher les points de :", ["Toutes", "Collecte 1", "Collecte 2"], horizontal=True)
         if collecte_filtre == "Collecte 1":
             df_carte = df_points_filtre[df_points_filtre['collecte_numero'] == 1]
@@ -766,11 +773,7 @@ with tabs[2]:
             df_carte = df_points_filtre
         
         if not df_carte.empty:
-            couleurs = {
-                "depart_depot": "green", "debut_collecte": "blue", "fin_collecte": "blue",
-                "depart_decharge": "orange", "arrivee_decharge": "red", "sortie_decharge": "purple",
-                "retour_depot": "brown", "point_libre": "gray"
-            }
+            # Définir les noms des points
             noms_points = {
                 "depart_depot": "🏭 Départ dépôt", "debut_collecte": "🗑️ Début collecte",
                 "fin_collecte": "🗑️ Fin collecte", "depart_decharge": "🚛 Départ décharge",
@@ -778,33 +781,44 @@ with tabs[2]:
                 "retour_depot": "🏁 Retour dépôt", "point_libre": "📍 Point libre"
             }
             df_carte["nom_affichage"] = df_carte["type_point"].map(noms_points)
+            df_carte['symbole'] = df_carte['collecte_numero'].apply(lambda x: 'circle' if x == 1 else 'square')
+            
+            # Palette de couleurs par équipe
+            equipes = df_carte['equipe'].unique()
+            palette = px.colors.qualitative.Plotly
+            color_map = {e: palette[i % len(palette)] for i, e in enumerate(equipes)}
             
             fig = px.scatter_mapbox(
                 df_carte, lat="latitude", lon="longitude",
-                color="type_point", hover_name="nom_affichage",
+                color="equipe",
+                symbol="symbole",
+                hover_name="nom_affichage",
                 hover_data={"quartier": True, "collecte_numero": True, "heure": True},
-                color_discrete_map=couleurs,
+                color_discrete_map=color_map,
                 zoom=12, center={"lat": 15.11, "lon": -16.65},
-                title=f"Itinéraire des points GPS - {collecte_filtre}",
+                title="Points GPS (couleur = équipe, forme = collecte 1/2)",
                 height=550
             )
-            # Tracer les lignes entre points consécutifs (par tournée)
+            
+            # Lignes entre points consécutifs
             for tid in df_carte['tournee_id'].unique():
                 df_tour = df_carte[df_carte['tournee_id'] == tid].sort_values('heure')
                 if len(df_tour) > 1:
+                    equipe_tour = df_tour.iloc[0]['equipe']
+                    couleur_ligne = color_map.get(equipe_tour, 'blue')
                     fig.add_trace(go.Scattermapbox(
                         lat=df_tour['latitude'].tolist(),
                         lon=df_tour['longitude'].tolist(),
-                        mode='lines+markers',
-                        line=dict(width=2, color='blue'),
-                        marker=dict(size=6, color='blue'),
-                        name=f'Trajet {tid}',
+                        mode='lines',
+                        line=dict(width=2, color=couleur_ligne),
+                        name=f'Trajet {equipe_tour} (tournée {tid})',
                         showlegend=False
                     ))
+            
             fig.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":40,"l":0,"b":0})
             st.plotly_chart(fig, use_container_width=True)
             
-            # Détail des distances
+            # Distances
             st.subheader("📏 Distances entre points consécutifs")
             distances = []
             for tid in df_carte['tournee_id'].unique():
@@ -816,21 +830,21 @@ with tabs[2]:
                         d = haversine(p1['latitude'], p1['longitude'], p2['latitude'], p2['longitude'])
                         distances.append({
                             "Tournée": tid,
+                            "Équipe": p1['equipe'],
                             "De": p1['nom_affichage'],
                             "À": p2['nom_affichage'],
                             "Distance (km)": round(d, 2)
                         })
             if distances:
                 st.dataframe(pd.DataFrame(distances), use_container_width=True)
-                distance_totale = sum(d['Distance (km)'] for d in distances)
-                st.info(f"**Distance totale calculée :** {distance_totale:.2f} km")
+                st.info(f"**Distance totale calculée :** {sum(d['Distance (km)'] for d in distances):.2f} km")
             else:
                 st.info("Aucune distance calculable (moins de deux points par tournée)")
         else:
             st.info("Aucun point GPS pour la collecte sélectionnée")
     else:
         st.info("Aucun point GPS enregistré pour la période")
-
+        
 # ==================== TAB 4 : DÉTAILS ====================
 with tabs[3]:
     st.subheader("📋 Détail des collectes")
