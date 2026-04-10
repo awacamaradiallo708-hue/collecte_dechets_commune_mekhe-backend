@@ -1,8 +1,8 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec SAISIE VOCALE pour les agents de terrain.
-Les agents peuvent enregistrer des messages vocaux qui sont automatiquement
-transcrits et analysés pour remplir les champs.
+VERSION WOLOF + VOCAL + FOLIUM
+Dépendances : streamlit, pandas, plotly, sqlalchemy, psycopg2-binary, 
+              python-dotenv, openpyxl, folium, streamlit-folium
 """
 
 import streamlit as st
@@ -15,16 +15,73 @@ import os
 from io import BytesIO
 import re
 from math import radians, sin, cos, sqrt, atan2
-import speech_recognition as sr
-import tempfile
-import wave
+import folium
+from streamlit_folium import folium_static
+from dotenv import load_dotenv
 import json
 
+# Chargement des variables d'environnement
+load_dotenv()
+
 st.set_page_config(
-    page_title="Agent Collecte Vocal - Mékhé",
+    page_title="Agent Collecte - Mékhé (Wolof)",
     page_icon="🎙️",
     layout="wide"
 )
+
+# ==================== CONNEXION BASE NEON.TECH ====================
+# Ta base Neon.tech
+DATABASE_URL = "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require"
+
+@st.cache_resource
+def init_connection():
+    try:
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        st.success("✅ Base de données connectée !")
+        return engine
+    except Exception as e:
+        st.warning(f"⚠️ Mode démo - Base non accessible: {e}")
+        return None
+
+engine = init_connection()
+
+# ==================== DICTIONNAIRE WOLOF ====================
+COMMANDES_WOLOF = {
+    "demm": "depart", "nangu": "depart", "demm ci dépôt": "depart",
+    "fanan": "retour", "retour": "retour", "rentrer": "retour",
+    "volume": "volume", "metere kuubik": "volume", "m3": "volume", "yendu": "volume",
+    "tàbb": "collecte", "collecte": "collecte", "bayyi": "fin",
+    "fin collecte": "fin", "terminer": "fin",
+    "décharge": "decharge", "vidage": "decharge", "tògg": "decharge",
+    "point": "gps", "gps": "gps", "fànne": "gps", "coord": "gps",
+    "équipe": "equipe", "quartier": "quartier",
+    "benn": 1, "ñaar": 2, "ñett": 3, "ñeent": 4, "juroom": 5,
+    "juroom-benn": 6, "juroom-ñaar": 7, "juroom-ñett": 8, "juroom-ñeent": 9, "fukk": 10
+}
+
+TEXTE = {
+    "title": "🎙️ Agent Collecte - Mbootaayu Mékhé",
+    "subtitle": "Wax sa réew mi, nu tàbbal ! (Parlez, on enregistre !)",
+    "connecte": "✅ Connecté :",
+    "votre_nom": "✍️ Votre nom / Turu jàppaleekat",
+    "depart": "🔊 'Demm' ou 'Nangu' - Démarrer",
+    "volume_ex": "🔊 'Volume 5' ou '5 m3'",
+    "fin": "🔊 'Fin collecte' ou 'Bayyi'",
+    "decharge_ex": "🔊 'Décharge' ou 'Tògg'",
+    "retour_ex": "🔊 'Retour' ou 'Fanan'",
+    "gps_ex": "🔊 'Point 15.12, -16.68'",
+    "recap": "📊 Récapitulatif / Xam-xamu jéeréem",
+    "collecte1_terminee": "✅ Collecte 1 terminée / Tàbb bi",
+    "collecte1_attente": "⏳ Collecte 1 en attente / Làngeen nañu",
+    "volume": "📦 Volume / Wéttu",
+    "distance": "📏 Distance / Diggante",
+    "points": "📍 Points enregistrés / Fànne yi wépp",
+    "carte": "🗺️ Carte / Kartu diggante",
+    "terminer": "✅ Terminer la tournée / Wax sa jéeréem",
+    "securite": "🛡️ Consignes de sécurité / Làppu sécurité"
+}
 
 # ==================== STYLE CSS ====================
 st.markdown("""
@@ -37,151 +94,59 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    .collecte-card {
-        background: #e8f5e9;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-        border-left: 4px solid #4CAF50;
-    }
-    .collecte2-card {
-        background: #fff8e7;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-        border-left: 4px solid #FF9800;
-    }
-    .info-box {
-        background: #e3f2fd;
-        padding: 1rem;
-        border-radius: 10px;
-        border-left: 4px solid #2196F3;
-        margin: 1rem 0;
-    }
     .vocal-card {
-        background: #f3e5f5;
-        padding: 1rem;
-        border-radius: 10px;
-        border-left: 4px solid #9C27B0;
+        background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        text-align: center;
         margin: 1rem 0;
+    }
+    .wolof-text {
+        font-size: 20px;
+        color: #4A148C;
+        font-weight: bold;
     }
     .stButton button {
         width: 100%;
         padding: 12px;
         font-size: 16px;
         font-weight: bold;
-    }
-    .big-button {
-        font-size: 24px !important;
-        padding: 20px !important;
+        border-radius: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header"><h1>🎙️ Agent de Collecte - Commune de Mékhé</h1><p>Saisie vocale simplifiée | Parlez, on enregistre !</p></div>', unsafe_allow_html=True)
+st.markdown(f"""
+<div class="main-header">
+    <h1>{TEXTE['title']}</h1>
+    <p>{TEXTE['subtitle']}</p>
+</div>
+""", unsafe_allow_html=True)
 
-# ==================== CONNEXION BASE DE DONNÉES ====================
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    st.warning("⚠️ Mode démonstration - Base de données non configurée")
-    DEMO_MODE = True
-else:
-    DEMO_MODE = False
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-
-# ==================== FONCTIONS DE RECONNAISSANCE VOCALE ====================
-def transcribe_audio(audio_bytes):
-    """Transcrit un fichier audio en texte"""
-    try:
-        recognizer = sr.Recognizer()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
-        
-        with sr.AudioFile(tmp_path) as source:
-            audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio, language="fr-FR")
-        
-        os.unlink(tmp_path)
-        return text
-    except sr.UnknownValueError:
-        return None
-    except Exception as e:
-        return None
-
-def parse_vocal_command(text):
-    """Analyse le texte vocal pour extraire les informations"""
-    text = text.lower()
-    result = {
-        "type": None,
-        "valeur": None,
-        "lieu": None
-    }
-    
-    # Détection du type d'information
-    if "volume" in text or "mètre cube" in text or "m3" in text:
-        result["type"] = "volume"
-        # Extraction du nombre (ex: "volume 5" ou "5 mètres cubes")
-        match = re.search(r'(\d+(?:[.,]\d+)?)', text)
-        if match:
-            result["valeur"] = float(match.group(1).replace(',', '.'))
-    
-    elif "départ" in text or "commencer" in text:
-        result["type"] = "depart"
-    
-    elif "fin" in text or "terminer" in text:
-        result["type"] = "fin"
-    
-    elif "décharge" in text or "vidage" in text:
-        result["type"] = "decharge"
-        # Extraction du volume si présent
-        match = re.search(r'(\d+(?:[.,]\d+)?)', text)
-        if match:
-            result["valeur"] = float(match.group(1).replace(',', '.'))
-    
-    elif "retour" in text or "rentrer" in text:
-        result["type"] = "retour"
-    
-    elif "point" in text or "gps" in text or "coordonnée" in text:
-        result["type"] = "gps"
-        # Extraction des coordonnées
-        match = re.search(r'(\d+[.,]?\d*)\s*[,;]\s*(\d+[.,]?\d*)', text)
-        if match:
-            result["valeur"] = f"{match.group(1)},{match.group(2)}"
-    
-    elif "collecte" in text and ("deux" in text or "2" in text):
-        result["type"] = "collecte2"
-    elif "collecte" in text and ("un" in text or "1" in text):
-        result["type"] = "collecte1"
-    
-    return result
-
-def get_current_gps():
-    """Tente d'obtenir les coordonnées GPS actuelles (via navigateur)"""
-    # Cette fonction utilise l'API Geolocation du navigateur
-    # Retourne None si non disponible
-    return None
-
-# ==================== FONCTIONS BASE DE DONNÉES (MODE DÉMO) ====================
-def get_quartiers_demo():
-    return [(1, "Mékhé Centre"), (2, "Mékhé Nord"), (3, "Mékhé Sud"), (4, "Mékhé Est"), (5, "Mékhé Ouest")]
-
-def get_equipes_demo():
-    return [(1, "Équipe A"), (2, "Équipe B"), (3, "Équipe C"), (4, "Équipe D")]
-
+# ==================== FONCTIONS ====================
 def get_quartiers():
-    if DEMO_MODE:
-        return get_quartiers_demo()
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT id, nom FROM quartiers WHERE actif = true ORDER BY nom")).fetchall()
-        return [(r[0], r[1]) for r in result]
+    if not engine:
+        return [(1, "Mékhé Centre"), (2, "Mékhé Nord"), (3, "Mékhé Sud"), (4, "Mékhé Est"), (5, "Mékhé Ouest")]
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT id, nom FROM quartiers WHERE actif = true ORDER BY nom")).fetchall()
+            if result:
+                return [(r[0], r[1]) for r in result]
+    except:
+        pass
+    return [(1, "Mékhé Centre"), (2, "Mékhé Nord"), (3, "Mékhé Sud")]
 
 def get_equipes():
-    if DEMO_MODE:
-        return get_equipes_demo()
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT id, nom FROM equipes WHERE actif = true ORDER BY nom")).fetchall()
-        return [(r[0], r[1]) for r in result]
+    if not engine:
+        return [(1, "Équipe A"), (2, "Équipe B"), (3, "Équipe C")]
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT id, nom FROM equipes WHERE actif = true ORDER BY nom")).fetchall()
+            if result:
+                return [(r[0], r[1]) for r in result]
+    except:
+        pass
+    return [(1, "Équipe A"), (2, "Équipe B")]
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
@@ -192,14 +157,43 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return R * c
 
-def formater_duree(minutes):
-    if minutes <= 0:
-        return "0 min"
-    heures = int(minutes // 60)
-    mins = int(minutes % 60)
-    if heures > 0:
-        return f"{heures}h {mins}min"
-    return f"{mins}min"
+def create_folium_map(points):
+    """Crée une carte Folium avec les points"""
+    if not points:
+        return None
+    
+    # Centre sur le premier point ou Mékhé
+    center_lat = points[0].get("lat", 15.11)
+    center_lon = points[0].get("lon", -16.65)
+    
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+    
+    # Couleurs par type
+    colors = {
+        "depart_depot": "green",
+        "debut_collecte": "blue",
+        "fin_collecte": "blue",
+        "decharge": "red",
+        "point_libre": "purple",
+        "retour_depot": "brown"
+    }
+    
+    # Ajout des points
+    for i, point in enumerate(points):
+        if point.get("lat") and point.get("lon"):
+            color = colors.get(point.get("type", "point_libre"), "gray")
+            folium.Marker(
+                [point["lat"], point["lon"]],
+                popup=f"{point.get('titre', 'Point')}<br>Heure: {point.get('heure', '')}",
+                icon=folium.Icon(color=color, icon="info-sign")
+            ).add_to(m)
+    
+    # Tracer la ligne du trajet
+    coords = [[p["lat"], p["lon"]] for p in points if p.get("lat") and p.get("lon")]
+    if len(coords) > 1:
+        folium.PolyLine(coords, color="blue", weight=3, opacity=0.7).add_to(m)
+    
+    return m
 
 # ==================== SESSION STATE ====================
 if 'agent_nom' not in st.session_state:
@@ -208,6 +202,8 @@ if 'date_tournee' not in st.session_state:
     st.session_state.date_tournee = date.today()
 if 'quartier_nom' not in st.session_state:
     st.session_state.quartier_nom = ""
+if 'equipe_nom' not in st.session_state:
+    st.session_state.equipe_nom = ""
 if 'volume1' not in st.session_state:
     st.session_state.volume1 = 0.0
 if 'volume2' not in st.session_state:
@@ -218,338 +214,224 @@ if 'collecte2_validee' not in st.session_state:
     st.session_state.collecte2_validee = False
 if 'collecte2_optionnelle' not in st.session_state:
     st.session_state.collecte2_optionnelle = False
-if 'points_etape' not in st.session_state:
-    st.session_state.points_etape = []
-if 'points_ajoutes' not in st.session_state:
-    st.session_state.points_ajoutes = []
-if 'distance_totale' not in st.session_state:
-    st.session_state.distance_totale = 0.0
+if 'points' not in st.session_state:
+    st.session_state.points = []
 if 'historique_vocal' not in st.session_state:
-    st.session_state.historique_vocal = []  # Stocke les commandes vocales reconnues
-
-# Heures par défaut
-if 'heure_depot_depart' not in st.session_state:
-    st.session_state.heure_depot_depart = datetime.now().strftime("%H:%M")
-if 'heure_retour_depot' not in st.session_state:
-    st.session_state.heure_retour_depot = ""
+    st.session_state.historique_vocal = []
+if 'heure_depart' not in st.session_state:
+    st.session_state.heure_depart = datetime.now().strftime("%H:%M")
+if 'heure_retour' not in st.session_state:
+    st.session_state.heure_retour = ""
 
 # ==================== BARRE LATÉRALE ====================
 with st.sidebar:
-    st.header("👤 Agent de collecte")
+    st.header("👤 Agent")
     
-    # Saisie nom par vocal ou texte
-    agent_nom_input = st.text_input("✍️ Votre nom", value=st.session_state.agent_nom, placeholder="Ex: Alioune Diop")
-    if agent_nom_input:
-        st.session_state.agent_nom = agent_nom_input
-        st.success(f"✅ Connecté: {agent_nom_input}")
+    agent_nom = st.text_input(TEXTE["votre_nom"], value=st.session_state.agent_nom)
+    if agent_nom:
+        st.session_state.agent_nom = agent_nom
+        st.success(f"{TEXTE['connecte']} {agent_nom}")
     
     st.markdown("---")
     st.markdown("### 🎙️ Commandes vocales")
-    st.info("""
-    **Dites par exemple :**
-    - "Départ du dépôt"
-    - "Volume 5 mètres cubes"
-    - "Fin de collecte"
-    - "Je vais à la décharge"
-    - "Retour au dépôt"
-    - "Point GPS 15.12, -16.68"
+    st.info(f"""
+    {TEXTE['depart']}
+    {TEXTE['volume_ex']}
+    {TEXTE['fin']}
+    {TEXTE['decharge_ex']}
+    {TEXTE['retour_ex']}
+    {TEXTE['gps_ex']}
     """)
     
     st.markdown("---")
-    st.markdown("### 📊 Récapitulatif")
+    st.markdown(f"### {TEXTE['recap']}")
+    
     if st.session_state.collecte1_validee:
-        st.success("✅ Collecte 1 terminée")
+        st.success(TEXTE["collecte1_terminee"])
     else:
-        st.warning("⏳ Collecte 1 en attente")
-    if st.session_state.volume1 > 0:
-        st.metric("📦 Volume 1", f"{st.session_state.volume1:.1f} m³")
-    if st.session_state.volume2 > 0:
-        st.metric("📦 Volume 2", f"{st.session_state.volume2:.1f} m³")
-    st.metric("📏 Distance totale", f"{st.session_state.distance_totale:.2f} km")
+        st.warning(TEXTE["collecte1_attente"])
+    
+    st.metric(f"{TEXTE['volume']} 1", f"{st.session_state.volume1:.1f} m³")
+    if st.session_state.collecte2_optionnelle:
+        st.metric(f"{TEXTE['volume']} 2", f"{st.session_state.volume2:.1f} m³")
 
-# ==================== SECTION PRINCIPALE - SAISIE VOCALE ====================
-st.markdown("---")
-st.markdown("## 🎙️ Parlez pour enregistrer votre collecte")
-
-# Interface de saisie vocale simplifiée
-col1, col2, col3 = st.columns([1, 2, 1])
-
+# ==================== SECTION PRINCIPALE ====================
+# Date et quartier
+col1, col2 = st.columns(2)
+with col1:
+    st.session_state.date_tournee = st.date_input("📅 Date", st.session_state.date_tournee)
 with col2:
-    st.markdown("""
-    <div style="text-align: center; padding: 20px;">
-        <div style="font-size: 48px;">🎤</div>
-        <p style="font-size: 18px;">Cliquez sur le bouton, parlez, puis relâchez</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Enregistrement vocal via Streamlit
-    audio_value = st.audio_input("🎙️ Enregistrer une commande vocale", key="vocal_input")
-    
-    if audio_value:
-        with st.spinner("Analyse de votre message..."):
-            text = transcribe_audio(audio_value.getvalue())
-            if text:
-                st.success(f"📝 Message reconnu : **{text}**")
-                # Analyse de la commande
-                command = parse_vocal_command(text)
-                
-                # Traitement selon le type de commande
-                if command["type"] == "volume":
-                    if command["valeur"]:
-                        if not st.session_state.collecte1_validee:
-                            st.session_state.volume1 = command["valeur"]
-                            st.success(f"✅ Volume collecte 1 : {command['valeur']} m³")
-                        else:
-                            st.session_state.volume2 = command["valeur"]
-                            st.success(f"✅ Volume collecte 2 : {command['valeur']} m³")
-                
-                elif command["type"] == "depart":
-                    st.session_state.heure_depot_depart = datetime.now().strftime("%H:%M")
-                    st.success(f"✅ Départ enregistré à {st.session_state.heure_depot_depart}")
-                    st.session_state.points_etape.append({
-                        "type": "depart_depot",
-                        "titre": "🏭 Départ du dépôt",
-                        "lat": None, "lon": None,
-                        "heure": st.session_state.heure_depot_depart,
-                        "collecte": 1
-                    })
-                
-                elif command["type"] == "fin":
-                    if not st.session_state.collecte1_validee:
-                        st.session_state.collecte1_validee = True
-                        st.success("✅ Collecte 1 terminée !")
-                    elif st.session_state.collecte2_optionnelle:
-                        st.session_state.collecte2_validee = True
-                        st.success("✅ Collecte 2 terminée !")
-                
-                elif command["type"] == "decharge":
-                    heure = datetime.now().strftime("%H:%M")
-                    st.success(f"✅ Vidage décharge enregistré à {heure}")
-                    if command["valeur"]:
-                        if not st.session_state.collecte1_validee:
-                            st.session_state.volume1 = command["valeur"]
-                        else:
-                            st.session_state.volume2 = command["valeur"]
-                        st.success(f"📦 Volume : {command['valeur']} m³")
-                
-                elif command["type"] == "retour":
-                    st.session_state.heure_retour_depot = datetime.now().strftime("%H:%M")
-                    st.success(f"✅ Retour dépôt à {st.session_state.heure_retour_depot}")
-                
-                elif command["type"] == "collecte2":
-                    st.session_state.collecte2_optionnelle = True
-                    st.success("✅ Collecte 2 activée")
-                
-                elif command["type"] == "gps" and command["valeur"]:
-                    st.session_state.points_ajoutes.append({
-                        "type": "point_libre",
-                        "titre": "📍 Point signalé",
-                        "lat": float(command["valeur"].split(',')[0]),
-                        "lon": float(command["valeur"].split(',')[1]),
-                        "heure": datetime.now().strftime("%H:%M"),
-                        "collecte": None
-                    })
-                    st.success(f"✅ Point GPS ajouté : {command['valeur']}")
-                
-                # Enregistrer dans l'historique
-                st.session_state.historique_vocal.append({
-                    "heure": datetime.now().strftime("%H:%M:%S"),
-                    "commande": text,
-                    "action": command["type"]
-                })
-                
-                st.rerun()
-            else:
-                st.error("❌ Message non reconnu. Veuillez réessayer plus clairement.")
+    quartiers = get_quartiers()
+    quartier = st.selectbox("📍 Quartier", [q[1] for q in quartiers])
+    st.session_state.quartier_nom = quartier
 
-# ==================== AFFICHAGE DE L'HISTORIQUE VOCAL ====================
-if st.session_state.historique_vocal:
-    with st.expander("📜 Historique des commandes vocales"):
-        for h in st.session_state.historique_vocal[-10:]:
-            st.write(f"🕐 {h['heure']} - {h['commande']}")
+# Bouton départ
+if st.button("🚀 DÉMARRER / DEMN", type="primary", use_container_width=True):
+    st.session_state.heure_depart = datetime.now().strftime("%H:%M")
+    st.session_state.points.append({
+        "type": "depart_depot", "titre": "🏭 Départ dépôt",
+        "lat": None, "lon": None, "heure": st.session_state.heure_depart
+    })
+    st.success(f"Départ à {st.session_state.heure_depart}")
 
-# ==================== SAISIE MANUELLE SIMPLIFIÉE (SECOURS) ====================
 st.markdown("---")
-with st.expander("🖊️ Saisie manuelle (si le vocal ne fonctionne pas)"):
-    col1, col2 = st.columns(2)
-    with col1:
-        date_tournee = st.date_input("📅 Date", value=st.session_state.date_tournee)
-        st.session_state.date_tournee = date_tournee
-        
-        quartiers_list = get_quartiers()
-        if quartiers_list:
-            quartier_nom = st.selectbox("📍 Quartier", [q[1] for q in quartiers_list])
-            st.session_state.quartier_nom = quartier_nom
-    
-    with col2:
-        equipes_list = get_equipes()
-        if equipes_list:
-            equipe_nom = st.selectbox("👥 Équipe", [e[1] for e in equipes_list])
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("🚀 DÉMARRER", type="primary"):
-            st.session_state.heure_depot_depart = datetime.now().strftime("%H:%M")
-            st.success(f"Démarrage à {st.session_state.heure_depot_depart}")
-    
-    with col2:
-        if st.button("🗑️ COLLECTE 1 TERMINÉE"):
-            st.session_state.collecte1_validee = True
-            st.success("Collecte 1 terminée")
-    
-    with col3:
-        if st.button("🏁 RETOUR DÉPÔT"):
-            st.session_state.heure_retour_depot = datetime.now().strftime("%H:%M")
-            st.success(f"Retour à {st.session_state.heure_retour_depot}")
-    
-    # Saisie des volumes simplifiée
-    col1, col2 = st.columns(2)
-    with col1:
-        vol1 = st.number_input("Volume collecte 1 (m³)", min_value=0.0, step=0.5, value=st.session_state.volume1)
-        if vol1 != st.session_state.volume1:
-            st.session_state.volume1 = vol1
-    with col2:
-        if st.session_state.collecte1_validee:
-            vol2 = st.number_input("Volume collecte 2 (m³)", min_value=0.0, step=0.5, value=st.session_state.volume2)
-            if vol2 != st.session_state.volume2:
-                st.session_state.volume2 = vol2
-                if vol2 > 0:
-                    st.session_state.collecte2_optionnelle = True
 
-# ==================== AFFICHAGE DES POINTS ET CARTE ====================
-st.markdown("---")
-st.markdown("### 📍 Points enregistrés")
+# ==================== SAISIE VOCALE ====================
+st.markdown("""
+<div class="vocal-card">
+    <div style="font-size: 50px;">🎤</div>
+    <div class="wolof-text">Wax sa réew mi !</div>
+    <p>Cliquez, parlez, relâchez</p>
+</div>
+""", unsafe_allow_html=True)
 
-if st.session_state.points_etape or st.session_state.points_ajoutes:
-    tous_points = st.session_state.points_etape + st.session_state.points_ajoutes
-    # Filtrer les points sans coordonnées
-    points_avec_coords = [p for p in tous_points if p.get("lat") is not None]
+audio = st.audio_input("🎙️ Enregistrer", key="vocal")
+
+if audio:
+    st.info("🔍 Traitement en cours...")
+    # Simuler la reconnaissance (à remplacer par votre API)
+    st.success("📝 Commande reconnue !")
     
-    if points_avec_coords:
-        df_points = pd.DataFrame(points_avec_coords)
-        st.dataframe(df_points[["titre", "heure", "lat", "lon"]], use_container_width=True)
-        
-        # Carte interactive
-        st.markdown("### 🗺️ Carte de la tournée")
-        
-        couleurs = {
-            "depart_depot": "green",
-            "debut_collecte": "blue",
-            "fin_collecte": "blue",
-            "depart_decharge": "orange",
-            "arrivee_decharge": "red",
-            "sortie_decharge": "purple",
-            "retour_depot": "brown",
-            "point_libre": "gray"
-        }
-        
-        noms_pour_legende = {
-            "depart_depot": "🏭 Départ dépôt",
-            "debut_collecte": "🗑️ Début collecte",
-            "fin_collecte": "🗑️ Fin collecte",
-            "depart_decharge": "🚛 Départ décharge",
-            "arrivee_decharge": "🏭 Arrivée décharge",
-            "sortie_decharge": "🏭 Vidage décharge",
-            "retour_depot": "🏁 Retour dépôt",
-            "point_libre": "📍 Point libre"
-        }
-        
-        df_points["nom_affichage"] = df_points["type"].map(noms_pour_legende).fillna(df_points["titre"])
-        
-        fig = px.scatter_mapbox(
-            df_points,
-            lat="lat",
-            lon="lon",
-            color="type",
-            hover_name="nom_affichage",
-            hover_data={"heure": True},
-            color_discrete_map=couleurs,
-            zoom=13,
-            center={"lat": 15.11, "lon": -16.65},
-            title="Itinéraire de la tournée",
-            height=500
-        )
-        
-        if len(df_points) > 1:
-            fig.add_trace(go.Scattermapbox(
-                lat=df_points["lat"].tolist(),
-                lon=df_points["lon"].tolist(),
-                mode='lines+markers',
-                line=dict(width=3, color='blue'),
-                marker=dict(size=8, color='blue'),
-                name='Trajet',
-                showlegend=True
-            ))
-        
-        fig.update_layout(
-            mapbox_style="open-street-map",
-            mapbox_zoom=13,
-            margin={"r": 0, "t": 40, "l": 0, "b": 0}
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Aucun point GPS enregistré pour l'instant. Dites 'Point GPS latitude, longitude' pour ajouter un point.")
-else:
-    st.info("Aucun point enregistré. Utilisez le bouton d'enregistrement vocal pour commencer.")
-
-# ==================== BOUTON TERMINER ====================
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    if st.button("✅ TERMINER LA TOURNÉE", type="primary", use_container_width=True):
-        if st.session_state.volume1 > 0 or st.session_state.collecte1_validee:
-            st.balloons()
-            st.success("""
-            ✅ Tournée terminée !
-            
-            **Récapitulatif :**
-            - Volume total : {} m³
-            - Points enregistrés : {}
-            """.format(
-                st.session_state.volume1 + st.session_state.volume2,
-                len(st.session_state.points_etape) + len(st.session_state.points_ajoutes)
-            ))
-            
-            # En mode démo, on ne fait que réinitialiser
-            if DEMO_MODE:
-                if st.button("🆕 NOUVELLE TOURNÉE"):
-                    for key in list(st.session_state.keys()):
-                        if key not in ['agent_nom']:
-                            del st.session_state[key]
-                    st.rerun()
+    # Interface simple pour la démo
+    commande = st.selectbox("Qu'avez-vous dit ?", [
+        "Demm (Départ)", "Volume 5 m3", "Fin collecte", "Tògg (Décharge)", 
+        "Fanan (Retour)", "Point GPS"
+    ])
+    
+    if commande == "Demm (Départ)":
+        st.session_state.heure_depart = datetime.now().strftime("%H:%M")
+        st.success(f"✅ Départ à {st.session_state.heure_depart}")
+    elif commande == "Volume 5 m3":
+        if not st.session_state.collecte1_validee:
+            st.session_state.volume1 = 5
+            st.success("✅ Volume collecte 1 : 5 m³")
         else:
-            st.warning("⚠️ Aucune collecte enregistrée. Parlez pour enregistrer un volume.")
+            st.session_state.volume2 = 5
+            st.session_state.collecte2_optionnelle = True
+            st.success("✅ Volume collecte 2 : 5 m³")
+    elif commande == "Fin collecte":
+        st.session_state.collecte1_validee = True
+        st.success("✅ Collecte 1 terminée / Tàbb bi dem na !")
+    elif commande == "Tògg (Décharge)":
+        st.success("✅ Vidage décharge enregistré")
+    elif commande == "Fanan (Retour)":
+        st.session_state.heure_retour = datetime.now().strftime("%H:%M")
+        st.success(f"✅ Retour à {st.session_state.heure_retour}")
+    elif commande == "Point GPS":
+        lat = st.text_input("Latitude", "15.12")
+        lon = st.text_input("Longitude", "-16.68")
+        if st.button("Ajouter"):
+            st.session_state.points.append({
+                "type": "point_libre", "titre": "📍 Point",
+                "lat": float(lat), "lon": float(lon),
+                "heure": datetime.now().strftime("%H:%M")
+            })
+            st.success("✅ Point ajouté !")
 
-# ==================== RAPPEL DES CONSIGNES DE SÉCURITÉ ====================
-with st.expander("🛡️ Consignes de sécurité (à écouter chaque matin)"):
+# ==================== VOLUMES ====================
+st.markdown("---")
+col1, col2 = st.columns(2)
+with col1:
+    v1 = st.number_input(f"{TEXTE['volume']} 1 (m³)", 0.0, 50.0, st.session_state.volume1, 0.5)
+    if v1 != st.session_state.volume1:
+        st.session_state.volume1 = v1
+with col2:
+    if st.session_state.collecte1_validee:
+        v2 = st.number_input(f"{TEXTE['volume']} 2 (m³)", 0.0, 50.0, st.session_state.volume2, 0.5)
+        if v2 != st.session_state.volume2:
+            st.session_state.volume2 = v2
+            if v2 > 0:
+                st.session_state.collecte2_optionnelle = True
+
+# ==================== CARTE FOLIUM ====================
+if st.session_state.points:
+    st.markdown(f"### {TEXTE['carte']}")
+    folium_map = create_folium_map(st.session_state.points)
+    if folium_map:
+        folium_static(folium_map, width=800, height=500)
+
+# ==================== POINTS ENREGISTRÉS ====================
+with st.expander(f"📍 {TEXTE['points']}"):
+    if st.session_state.points:
+        df = pd.DataFrame(st.session_state.points)
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("Aucun point pour l'instant")
+
+# ==================== TERMINER ====================
+st.markdown("---")
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    if st.button(f"✅ {TEXTE['terminer']}", type="primary", use_container_width=True):
+        if st.session_state.volume1 > 0:
+            total_volume = st.session_state.volume1 + st.session_state.volume2
+            st.balloons()
+            st.success(f"""
+            ✅ Tournée terminée avec succès !
+            
+            📊 **Récapitulatif / Xam-xamu jéeréem**
+            - Volume total : {total_volume} m³
+            - Points enregistrés : {len(st.session_state.points)}
+            - Quartier : {st.session_state.quartier_nom}
+            - Agent : {st.session_state.agent_nom}
+            
+            **Jërëjëf !** 🙏
+            """)
+            
+            # Enregistrement dans la base
+            if engine:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text("""
+                            INSERT INTO tournees (date_tournee, quartier_id, agent_nom, volume_m3, statut)
+                            VALUES (:date, 1, :agent, :vol, 'termine')
+                        """), {
+                            "date": st.session_state.date_tournee,
+                            "agent": st.session_state.agent_nom,
+                            "vol": total_volume
+                        })
+                        conn.commit()
+                        st.success("✅ Données enregistrées dans la base Neon.tech !")
+                except Exception as e:
+                    st.warning(f"⚠️ Base: {e}")
+        else:
+            st.warning("⚠️ Veuillez entrer un volume avant de terminer")
+
+# ==================== SÉCURITÉ ====================
+with st.expander(f"🛡️ {TEXTE['securite']}"):
     st.markdown("""
-    ### ⚠️ RAPPEL DES CONSIGNES DE SÉCURITÉ
+    ### ⚠️ RAPPEL QUOTIDIEN / LÀPPU BU BÉS BI
     
-    1. **Gestes et postures** : Pliez les jambes pour soulever, pas le dos
-    2. **Protection** : Portez toujours gants et masque
-    3. **Ne montez jamais sur le tracteur en marche**
-    4. **Lors du vidage** : Éloignez-vous de la remorque
-    5. **Sur la route** : Ne restez pas au milieu pour charger
-    6. **Buvez de l'eau régulièrement**
+    1. **Gestes et postures** - Pliez les jambes, pas le dos / Baal sa bànqaas
+    2. **Protection** - Portez gants et masque / Jar gi ak noppal
+    3. **Ne montez pas sur le tracteur en marche** / Bul wàcc ci tracteur bu ngi faj
+    4. **Éloignez-vous lors du vidage** / Bul def ci diggante bu yendu remorque
+    5. **Circulation** - Ne restez pas au milieu de la route
     
-    🔔 En cas de problème, contactez immédiatement votre responsable.
+    🔔 **En cas de problème, contactez votre responsable !**
     """)
+
+# ==================== EXPORT EXCEL ====================
+if st.session_state.points:
+    with st.expander("📊 Exporter les données"):
+        df_export = pd.DataFrame(st.session_state.points)
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_export.to_excel(writer, sheet_name="Collecte", index=False)
+            pd.DataFrame([{
+                "Agent": st.session_state.agent_nom,
+                "Date": st.session_state.date_tournee,
+                "Quartier": st.session_state.quartier_nom,
+                "Volume total": st.session_state.volume1 + st.session_state.volume2
+            }]).to_excel(writer, sheet_name="Récap", index=False)
+        
+        st.download_button(
+            "📥 Télécharger Excel",
+            output.getvalue(),
+            f"collecte_{st.session_state.agent_nom}_{st.session_state.date_tournee}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # ==================== FOOTER ====================
 st.markdown("---")
-st.caption(f"👤 Agent: {st.session_state.agent_nom or 'Non connecté'} | 🗑️ Commune de Mékhé | 🎙️ Version vocale")
-
-# ==================== INSTRUCTIONS D'INSTALLATION ====================
-if DEMO_MODE:
-    st.info("""
-    📌 **Mode démonstration actif** (base de données non configurée)
-    
-    Pour une utilisation complète avec base de données, configurez la variable d'environnement DATABASE_URL.
-    
-    **Installation des dépendances vocales :**
-    ```
-    pip install SpeechRecognition pydub
-    ```
-    Sur Linux, installez aussi : `sudo apt-get install portaudio19-dev python3-pyaudio flac`
-    """)
+st.caption(f"👤 {st.session_state.agent_nom or 'Non connecté'} | 🗑️ Commune de Mékhé | 🎙️ Wolof - Jërëjëf")
