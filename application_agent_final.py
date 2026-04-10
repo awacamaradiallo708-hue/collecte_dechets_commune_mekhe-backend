@@ -49,37 +49,69 @@ def init_connection():
 engine = init_connection()
 
 # ==================== DICTIONNAIRE VOCAL WOLOF/FRANÇAIS ====================
+# VERSION CORRIGÉE - Plus de doublons, syntaxe correcte
 COMMANDES_VOCALES = {
     # Départ
-    "demm": "depart", "nangu": "depart", "je quitte": "depart",
-    "départ": "depart", "partir": "depart",
+    "demm": "depart",
+    "nangu": "depart",
+    "je quitte": "depart",
+    "depart": "depart",
+    "partir": "depart",
+    "magui ngéne dépot bi": "depart",
     
     # Collecte 1
-    "collecte 1": "collecte1", "première collecte": "collecte1",
-    "je commence à collecter": "collecte1", "tàbb": "collecte1",  "TABBALI NA": "collecte1"
+    "collecte 1": "collecte1",
+    "premiere collecte": "collecte1",
+    "je commence à collecter": "collecte1",
+    "tàbb": "collecte1",
+    "tabbali na": "collecte1",
     
-   # Collecte 2
+    # Collecte 2
     "collecte 2": "collecte2",
     "deuxieme collecte": "collecte2",
     
     # Volume
-    "volume": "volume", "m3": "volume", "mètre cube": "volume",
-    "yendu": "volume", "wéttu": "volume",
+    "volume": "volume",
+    "m3": "volume",
+    "metre cube": "volume",
+    "yendu": "volume",
+    "wéttu": "volume",
     
     # Décharge
-    "décharge": "decharge", "vidage": "decharge", "tògg": "decharge",
-    "je vide": "decharge", "déchargement": "decharge", "decharge": "SOTTI MBALITE",
+    "decharge": "decharge",
+    "vidage": "decharge",
+    "tògg": "decharge",
+    "je vide": "decharge",
+    "dechargement": "decharge",
+    "sotti mbalite": "decharge",
     
     # Retour
-    "retour": "retour", "je rentre": "retour", "fanan": "retour",
-    "terminé": "retour", "retour": "magui depe", "retour": "depe",
+    "retour": "retour",
+    "je rentre": "retour",
+    "fanan": "retour",
+    "termine": "retour",
+    "magui depe": "retour",
+    "depe": "retour",
     
     # Fin
-    "fin": "fin", "terminer": "fin", "c'est fini": "fin", "bayyi": "fin", "fin": "paréna", "fin": "diékhna",
+    "fin": "fin",
+    "terminer": "fin",
+    "c est fini": "fin",
+    "bayyi": "fin",
+    "parena": "fin",
+    "diékhna": "fin",
     
     # Nombres
-    "benn": 1, "ñaar": 2, "ñett": 3, "ñeent": 4, "juroom": 5,
-    "juroom-benn": 6, "juroom-ñaar": 7, "juroom-ñett": 8, "juroom-ñeent": 9, "fukk": 10
+    "benn": 1,
+    "ñaar": 2,
+    "ñett": 3,
+    "ñeent": 4,
+    "juroom": 5,
+    "juroom benn": 6,
+    "juroom ñaar": 7,
+    "juroom ñett": 8,
+    "juroom ñeent": 9,
+    "fukk": 10
 }
 
 # ==================== STYLE ====================
