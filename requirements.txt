@@ -7,6 +7,4 @@ python-dotenv
 openpyxl
 folium
 streamlit-folium
-speechrecognition
-pyaudio
-pyttsx3
+openai
