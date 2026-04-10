@@ -67,14 +67,14 @@ COMMANDES_VOCALES = {
     
     # Décharge
     "décharge": "decharge", "vidage": "decharge", "tògg": "decharge",
-    "je vide": "decharge", "déchargement": "decharge", "decharge": "SOTTI MBALITE"
+    "je vide": "decharge", "déchargement": "decharge", "decharge": "SOTTI MBALITE",
     
     # Retour
     "retour": "retour", "je rentre": "retour", "fanan": "retour",
-    "terminé": "retour", "retour": "magui depe", "retour": "depe"
+    "terminé": "retour", "retour": "magui depe", "retour": "depe",
     
     # Fin
-    "fin": "fin", "terminer": "fin", "c'est fini": "fin", "bayyi": "fin", "fin": "paréna", "fin": "diékhna"
+    "fin": "fin", "terminer": "fin", "c'est fini": "fin", "bayyi": "fin", "fin": "paréna", "fin": "diékhna",
     
     # Nombres
     "benn": 1, "ñaar": 2, "ñett": 3, "ñeent": 4, "juroom": 5,
