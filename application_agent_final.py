@@ -1,10 +1,14 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-VERSION COMPLÈTE AVEC :
+VERSION COMPLÈTE AVEC SAISIE VOCALE (Cloud compatible)
 - Saisie vocale en Wolof/Français
 - Choix de toutes les équipes (A, B, C, D)
 - Google Maps intégré
 - Enregistrement des points vocaux
+- Historique vocal
+- Carte Folium
+- Export Excel
+- Consignes sécurité
 """
 
 import streamlit as st
@@ -21,8 +25,6 @@ import folium
 from streamlit_folium import folium_static
 from dotenv import load_dotenv
 import json
-import speech_recognition as sr
-import tempfile
 
 load_dotenv()
 
@@ -48,8 +50,47 @@ def init_connection():
 
 engine = init_connection()
 
-# ==================== DICTIONNAIRE VOCAL WOLOF/FRANÇAIS ====================
-# VERSION CORRIGÉE - Plus de doublons, syntaxe correcte
+# ==================== FONCTION DE RECONNAISSANCE VOCALE (Cloud) ====================
+def transcribe_with_openai(audio_bytes):
+    """
+    Transcrit l'audio avec Whisper API (OpenAI)
+    Nécessite OPENAI_API_KEY dans les secrets Streamlit
+    """
+    try:
+        import openai
+        import io
+        
+        # Récupérer la clé API
+        api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        
+        openai.api_key = api_key
+        
+        # Créer un fichier BytesIO
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "recording.webm"
+        
+        # Transcrire
+        transcript = openai.Audio.transcribe(
+            model="whisper-1",
+            file=audio_file,
+            language="fr"
+        )
+        
+        return transcript.text.lower()
+    except Exception as e:
+        st.warning(f"⚠️ Erreur transcription: {e}")
+        return None
+
+def transcrire_audio(audio_bytes):
+    """Version simplifiée pour la démo - à remplacer par votre API préférée"""
+    # Pour l'instant, on simule la transcription
+    # Remplacez ceci par votre service de reconnaissance vocale préféré
+    st.info("🎤 Fonction de transcription vocale - Configurez votre API")
+    return None
+
+# ==================== DICTIONNAIRE VOCAL WOLOF/FRANÇAIS (CORRIGÉ) ====================
 COMMANDES_VOCALES = {
     # Départ
     "demm": "depart",
@@ -138,12 +179,6 @@ st.markdown("""
         font-weight: bold;
         text-align: center;
     }
-    .record-button {
-        background-color: #ff4444 !important;
-        color: white !important;
-        font-size: 24px !important;
-        padding: 20px !important;
-    }
     .stButton button {
         width: 100%;
         padding: 12px;
@@ -162,27 +197,14 @@ st.markdown("""
 
 # ==================== FONCTIONS ====================
 def get_quartiers():
-    return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), (7, "LEBOU OUEST")]
+    return [
+        (1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"),
+        (4, "NGAYE DIAGNE"), (5, "MAMBARA"),
+        (6, "NGAYE DJITTE"), (7, "LEBOU OUEST")
+    ]
 
 def get_equipes():
     return [(1, "Équipe A"), (2, "Équipe B"), (3, "Équipe C"), (4, "Équipe D")]
-
-def transcrire_audio(audio_bytes):
-    """Transcrit l'audio en texte"""
-    try:
-        recognizer = sr.Recognizer()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
-        
-        with sr.AudioFile(tmp_path) as source:
-            audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio, language="fr-FR")
-        
-        os.unlink(tmp_path)
-        return text.lower()
-    except:
-        return None
 
 def analyser_commande_vocale(texte):
     """Analyse la commande vocale (Wolof ou Français)"""
@@ -273,11 +295,22 @@ with st.sidebar:
     **Wolof / Français :**
     - "Magui ngéne dépot bi" ou "Je quitte le dépôt"
     - "Collecte 1" ou "TABBALI NA"
-    - "Volume  m3"
+    - "Volume 5 m3"
     - "Décharge" ou "SOTTI MBALITE"
     - "Retour" ou "magui depe"
     - "Fin" ou "paréna"
     """)
+    
+    st.markdown("---")
+    st.markdown("### 📊 Récapitulatif")
+    if st.session_state.collecte1_faite:
+        st.success("✅ Collecte 1 terminée")
+    else:
+        st.warning("⏳ Collecte 1 en attente")
+    st.metric("📦 Volume 1", f"{st.session_state.volume1:.1f} m³")
+    if st.session_state.collecte2_option:
+        st.metric("📦 Volume 2", f"{st.session_state.volume2:.1f} m³")
+    st.metric("📍 Points", len(st.session_state.points))
 
 # ==================== SECTION PRINCIPALE ====================
 # Choix du quartier et équipe
@@ -303,12 +336,14 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Bouton d'enregistrement vocal
+# Bouton d'enregistrement vocal avec st.audio_input (compatible cloud)
 audio = st.audio_input("🔴 Enregistrer", key="vocal_input")
 
 if audio:
     with st.spinner("🔍 Nu ngi koy xam-xam..."):
-        texte = transcrire_audio(audio.getvalue())
+        # Essayer la transcription avec OpenAI
+        texte = transcribe_with_openai(audio.getvalue())
+        
         if texte:
             st.session_state.dernier_message_vocal = texte
             st.success(f"📝 Nga wax : **{texte}**")
@@ -320,7 +355,8 @@ if audio:
                 if commande["type"] == "depart":
                     st.session_state.heure_depart = datetime.now().strftime("%H:%M:%S")
                     st.session_state.points.append({
-                        "type": "depart", "titre": "🏭 Départ au dépôt / Demm ci dépôt",
+                        "type": "depart",
+                        "titre": "🏭 Départ au dépôt / Demm ci dépôt",
                         "lat": st.session_state.derniere_position["lat"],
                         "lon": st.session_state.derniere_position["lon"],
                         "heure": st.session_state.heure_depart,
@@ -332,7 +368,8 @@ if audio:
                 elif commande["type"] == "collecte1":
                     st.session_state.collecte1_faite = True
                     st.session_state.points.append({
-                        "type": "collecte1", "titre": "🗑️ Début collecte 1 / TABBALI NA",
+                        "type": "collecte1",
+                        "titre": "🗑️ Début collecte 1 / TABBALI NA",
                         "lat": st.session_state.derniere_position["lat"],
                         "lon": st.session_state.derniere_position["lon"],
                         "heure": datetime.now().strftime("%H:%M:%S"),
@@ -343,7 +380,8 @@ if audio:
                 elif commande["type"] == "collecte2":
                     st.session_state.collecte2_option = True
                     st.session_state.points.append({
-                        "type": "collecte2", "titre": "🗑️ Collecte 2",
+                        "type": "collecte2",
+                        "titre": "🗑️ Collecte 2",
                         "lat": st.session_state.derniere_position["lat"],
                         "lon": st.session_state.derniere_position["lon"],
                         "heure": datetime.now().strftime("%H:%M:%S"),
@@ -361,7 +399,8 @@ if audio:
                 
                 elif commande["type"] == "decharge":
                     st.session_state.points.append({
-                        "type": "decharge", "titre": "🚛 Vidage décharge / SOTTI MBALITE",
+                        "type": "decharge",
+                        "titre": "🚛 Vidage décharge / SOTTI MBALITE",
                         "lat": st.session_state.derniere_position["lat"],
                         "lon": st.session_state.derniere_position["lon"],
                         "heure": datetime.now().strftime("%H:%M:%S"),
@@ -372,7 +411,8 @@ if audio:
                 elif commande["type"] == "retour":
                     st.session_state.heure_retour = datetime.now().strftime("%H:%M:%S")
                     st.session_state.points.append({
-                        "type": "retour", "titre": "🏁 Retour dépôt / Depe",
+                        "type": "retour",
+                        "titre": "🏁 Retour dépôt / Depe",
                         "lat": st.session_state.derniere_position["lat"],
                         "lon": st.session_state.derniere_position["lon"],
                         "heure": st.session_state.heure_retour,
@@ -383,7 +423,7 @@ if audio:
                 elif commande["type"] == "fin":
                     st.success("✅ Tournée terminée !")
                 
-                # Historique
+                # Historique vocal
                 st.session_state.historique_vocal.append({
                     "heure": datetime.now().strftime("%H:%M:%S"),
                     "commande": texte,
@@ -393,7 +433,7 @@ if audio:
             else:
                 st.warning("⚠️ Commande non reconnue. Dites : Demm, Collecte 1, Volume 5, Décharge, ou Retour")
         else:
-            st.error("❌ Nu nangu koo wax ! Jëflante (Non reconnu, réessayez)")
+            st.info("ℹ️ Transcription non disponible. Utilisez les boutons ci-dessous.")
 
 # Afficher le dernier message vocal
 if st.session_state.dernier_message_vocal:
@@ -401,23 +441,52 @@ if st.session_state.dernier_message_vocal:
 
 st.markdown("---")
 
-# ==================== SAISIE MANUELLE SIMPLIFIÉE ====================
+# ==================== SAISIE MANUELLE SIMPLIFIÉE (Boutons de secours) ====================
 with st.expander("🖊️ Saisie manuelle (Si le vocal ne marche pas)"):
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         if st.button("🚀 DÉPART / Mangi départ", use_container_width=True):
             st.session_state.heure_depart = datetime.now().strftime("%H:%M:%S")
+            st.session_state.points.append({
+                "type": "depart",
+                "titre": "🏭 Départ au dépôt",
+                "lat": st.session_state.derniere_position["lat"],
+                "lon": st.session_state.derniere_position["lon"],
+                "heure": st.session_state.heure_depart
+            })
             st.success(f"Départ à {st.session_state.heure_depart}")
+            st.balloons()
     with col2:
         if st.button("🗑️ COLLECTE 1 / TABBALI NA", use_container_width=True):
             st.session_state.collecte1_faite = True
+            st.session_state.points.append({
+                "type": "collecte1",
+                "titre": "🗑️ Collecte 1 démarrée",
+                "lat": st.session_state.derniere_position["lat"],
+                "lon": st.session_state.derniere_position["lon"],
+                "heure": datetime.now().strftime("%H:%M:%S")
+            })
             st.success("Collecte 1 démarrée")
     with col3:
         if st.button("🚛 DÉCHARGE / SOTTI MBALITE", use_container_width=True):
-            st.success("Vidage décharge")
+            st.session_state.points.append({
+                "type": "decharge",
+                "titre": "🚛 Vidage décharge",
+                "lat": st.session_state.derniere_position["lat"],
+                "lon": st.session_state.derniere_position["lon"],
+                "heure": datetime.now().strftime("%H:%M:%S")
+            })
+            st.success("Vidage décharge enregistré")
     with col4:
         if st.button("🏁 RETOUR / DEPE", use_container_width=True):
             st.session_state.heure_retour = datetime.now().strftime("%H:%M:%S")
+            st.session_state.points.append({
+                "type": "retour",
+                "titre": "🏁 Retour dépôt",
+                "lat": st.session_state.derniere_position["lat"],
+                "lon": st.session_state.derniere_position["lon"],
+                "heure": st.session_state.heure_retour
+            })
             st.success(f"Retour à {st.session_state.heure_retour}")
 
 # ==================== VOLUMES ====================
@@ -473,8 +542,10 @@ if st.button("📍 ENREGISTRER MA POSITION", use_container_width=True):
             lon = float(gps_lon)
             st.session_state.derniere_position = {"lat": lat, "lon": lon}
             st.session_state.points.append({
-                "type": "position", "titre": f"📍 Position de {st.session_state.agent_prenom}",
-                "lat": lat, "lon": lon,
+                "type": "position",
+                "titre": f"📍 Position de {st.session_state.agent_prenom}",
+                "lat": lat,
+                "lon": lon,
                 "heure": datetime.now().strftime("%H:%M:%S")
             })
             st.success(f"✅ Position enregistrée : {lat}, {lon}")
@@ -490,7 +561,14 @@ points_valides = [p for p in st.session_state.points if p.get("lat") is not None
 if points_valides:
     m = folium.Map(location=[points_valides[0]["lat"], points_valides[0]["lon"]], zoom_start=14)
     
-    couleurs = {"depart": "green", "collecte1": "blue", "collecte2": "purple", "decharge": "red", "retour": "brown", "position": "orange"}
+    couleurs = {
+        "depart": "green",
+        "collecte1": "blue",
+        "collecte2": "purple",
+        "decharge": "red",
+        "retour": "brown",
+        "position": "orange"
+    }
     
     for p in points_valides:
         color = couleurs.get(p.get("type", "position"), "gray")
@@ -508,12 +586,37 @@ if points_valides:
 else:
     st.info("📍 Aucun point GPS. Enregistrez votre position avec Google Maps")
 
+# ==================== EXPORT EXCEL ====================
+if points_valides:
+    with st.expander("📊 Exporter les données en Excel"):
+        df_export = pd.DataFrame(points_valides)
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_export.to_excel(writer, sheet_name="Points GPS", index=False)
+            pd.DataFrame([{
+                "Agent": f"{st.session_state.agent_prenom} {st.session_state.agent_nom}",
+                "Date": st.session_state.date_tournee,
+                "Quartier": quartier[1],
+                "Équipe": equipe[1],
+                "Volume total": st.session_state.volume1 + st.session_state.volume2,
+                "Heure départ": st.session_state.heure_depart,
+                "Heure retour": st.session_state.heure_retour,
+                "Points GPS": len(points_valides)
+            }]).to_excel(writer, sheet_name="Récapitulatif", index=False)
+        
+        st.download_button(
+            "📥 Télécharger Excel",
+            output.getvalue(),
+            f"collecte_{st.session_state.agent_prenom}_{st.session_state.date_tournee}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
 # ==================== TERMINER ====================
 st.markdown("---")
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     if st.button("✅ TERMINER LA TOURNÉE", type="primary", use_container_width=True):
-        if st.session_state.collecte1_faite:
+        if st.session_state.collecte1_faite and st.session_state.volume1 > 0:
             total_volume = st.session_state.volume1 + st.session_state.volume2
             nom_complet = f"{st.session_state.agent_prenom} {st.session_state.agent_nom}"
             
@@ -525,9 +628,13 @@ with col2:
             - Agent : {nom_complet}
             - Quartier : {quartier[1]}
             - Équipe : {equipe[1]}
+            - Volume collecte 1 : {st.session_state.volume1} m³
+            - Volume collecte 2 : {st.session_state.volume2} m³
             - Volume total : {total_volume} m³
             - Points GPS : {len(points_valides)}
             - Commandes vocales : {len(st.session_state.historique_vocal)}
+            - Heure départ : {st.session_state.heure_depart}
+            - Heure retour : {st.session_state.heure_retour}
             
             **Jërëjëf !** 🙏
             """)
@@ -553,13 +660,13 @@ with col2:
                 except Exception as e:
                     st.warning(f"⚠️ Base: {e}")
         else:
-            st.warning("⚠️ Veuillez faire la collecte 1 d'abord")
+            st.warning("⚠️ Veuillez faire la collecte 1 et entrer un volume")
 
 # ==================== HISTORIQUE VOCAL ====================
 if st.session_state.historique_vocal:
     with st.expander("📜 Historique des commandes vocales"):
         for h in st.session_state.historique_vocal[-10:]:
-            st.write(f"🕐 {h['heure']} - {h['commande']}")
+            st.write(f"🕐 {h['heure']} - {h['commande']} → {h['action']}")
 
 # ==================== CONSIGNES SÉCURITÉ ====================
 with st.expander("🛡️ Consignes de sécurité / Làppu sécurité"):
