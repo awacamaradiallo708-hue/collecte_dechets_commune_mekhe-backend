@@ -58,8 +58,9 @@ COMMANDES_VOCALES = {
     "collecte 1": "collecte1", "première collecte": "collecte1",
     "je commence à collecter": "collecte1", "tàbb": "collecte1",  "TABBALI NA": "collecte1"
     
-    # Collecte 2
-    "collecte2": "collecte2", "deuxième collecte": "collecte2",
+   # Collecte 2
+    "collecte 2": "collecte2",
+    "deuxieme collecte": "collecte2",
     
     # Volume
     "volume": "volume", "m3": "volume", "mètre cube": "volume",
@@ -129,7 +130,7 @@ st.markdown("""
 
 # ==================== FONCTIONS ====================
 def get_quartiers():
-    return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), ("LEBOU OUEST")]
+    return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), (7, "LEBOU OUEST")]
 
 def get_equipes():
     return [(1, "Équipe A"), (2, "Équipe B"), (3, "Équipe C"), (4, "Équipe D")]
