@@ -59,7 +59,7 @@ COMMANDES_VOCALES = {
     "je commence à collecter": "collecte1", "tàbb": "collecte1",  "TABBALI NA": "collecte1"
     
     # Collecte 2
-    "collecte 2": "collecte2", "deuxième collecte": "collecte2",
+    "collecte2": "collecte2", "deuxième collecte": "collecte2",
     
     # Volume
     "volume": "volume", "m3": "volume", "mètre cube": "volume",
