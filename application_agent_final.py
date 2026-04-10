@@ -86,13 +86,13 @@ st.markdown("""
 # ==================== FONCTIONS ====================
 def get_quartiers():
     if not engine:
-        return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), ("LEBOU OUEST)]
+        return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), ("LEBOU OUEST")]
     try:
         with engine.connect() as conn:
             result = conn.execute(text("SELECT id, nom FROM quartiers WHERE actif = true ORDER BY nom")).fetchall()
             return [(r[0], r[1]) for r in result] if result else [(1, "HLM")]
     except:
-        return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), ("LEBOU OUEST)]
+        return [(1, "HLM"), (2, "NDIOP"), (3, "LEBOU EST"), (4, "NGAYE DIAGNE"), (5, "MAMBARA"), (6, "NGAYE DJITTE"), ("LEBOU OUEST")]
 
 def get_equipes():
     if not engine:
