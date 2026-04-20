@@ -1,8 +1,6 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec GPS fonctionnel via streamlit-geolocation
-- Cliquez sur un bouton → GPS automatique
-- Positions différentes pour chaque action
+Version avec GPS via JavaScript pur (sans module externe)
 """
 
 import streamlit as st
@@ -11,9 +9,9 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
-from streamlit_geolocation import st_geolocation
 from io import BytesIO
 from math import radians, sin, cos, sqrt, atan2
+import json
 
 # ==================== CONNEXION BASE NEON.TECH ====================
 DATABASE_URL = "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require"
@@ -71,6 +69,17 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
+    .gps-button {
+        background-color: #2196F3;
+        color: white;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        width: 100%;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -108,23 +117,72 @@ if 'longitude' not in st.session_state:
 if 'gps_obtenu' not in st.session_state:
     st.session_state.gps_obtenu = False
 
-# ==================== FONCTIONS ====================
-def calculer_distance(points):
-    """Calcule la distance totale parcourue"""
-    if len(points) < 2:
-        return 0
-    distance = 0
-    for i in range(1, len(points)):
-        lat1, lon1 = points[i-1]["lat"], points[i-1]["lon"]
-        lat2, lon2 = points[i]["lat"], points[i]["lon"]
-        R = 6371
-        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
-        distance += R * c
-    return round(distance, 2)
+# ==================== COMPOSANT GPS HTML ====================
+def get_gps_component():
+    """Composant HTML/JavaScript pour obtenir la position GPS"""
+    return """
+    <div id="gps_status" style="background-color: #f0f0f0; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 10px;">
+        ⚠️ Cliquez sur le bouton pour obtenir votre position
+    </div>
+    <button id="gps_button" class="gps-button" onclick="getLocation()">
+        📍 Obtenir ma position GPS
+    </button>
+    
+    <input type="text" id="gps_result" style="display: none;" />
+    
+    <script>
+    function getLocation() {
+        var statusDiv = document.getElementById('gps_status');
+        statusDiv.innerHTML = '📍 Recherche de votre position en cours...';
+        statusDiv.style.backgroundColor = '#fff3e0';
+        
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    var lat = position.coords.latitude;
+                    var lon = position.coords.longitude;
+                    var timestamp = new Date().toLocaleTimeString();
+                    
+                    statusDiv.innerHTML = '✅ Position trouvée !<br>Latitude: ' + lat.toFixed(6) + '<br>Longitude: ' + lon.toFixed(6);
+                    statusDiv.style.backgroundColor = '#e8f5e9';
+                    
+                    var data = JSON.stringify({
+                        lat: lat, 
+                        lon: lon,
+                        timestamp: timestamp
+                    });
+                    
+                    var input = document.getElementById('gps_result');
+                    input.value = data;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                },
+                function(error) {
+                    var errorMsg = '';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED:
+                            errorMsg = 'Permission refusée. Activez la localisation.';
+                            break;
+                        case error.POSITION_UNAVAILABLE:
+                            errorMsg = 'Position non disponible.';
+                            break;
+                        case error.TIMEOUT:
+                            errorMsg = 'Délai dépassé. Réessayez.';
+                            break;
+                        default:
+                            errorMsg = 'Erreur GPS inconnue';
+                    }
+                    statusDiv.innerHTML = '❌ ' + errorMsg;
+                    statusDiv.style.backgroundColor = '#ffebee';
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        } else {
+            statusDiv.innerHTML = '❌ GPS non supporté par ce navigateur';
+            statusDiv.style.backgroundColor = '#ffebee';
+        }
+    }
+    </script>
+    """
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
@@ -148,18 +206,21 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("### 📡 GPS")
         
-        # Bouton pour obtenir la position GPS
-        if st.button("📍 Obtenir ma position GPS", use_container_width=True, type="primary"):
-            st.session_state.gps_obtenu = False
+        # Afficher le composant GPS
+        st.components.v1.html(get_gps_component(), height=200)
         
-        # Composant de géolocalisation
-        location = st_geolocation()
+        # Champ caché pour recevoir les données GPS
+        gps_data = st.text_input("", key="gps_receiver", label_visibility="collapsed", placeholder="")
         
-        if location:
-            st.session_state.latitude = location.get("latitude", 15.121048)
-            st.session_state.longitude = location.get("longitude", -16.686826)
-            st.session_state.gps_obtenu = True
-            st.success(f"✅ Position: {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}")
+        if gps_data:
+            try:
+                data = json.loads(gps_data)
+                st.session_state.latitude = data.get("lat", 15.121048)
+                st.session_state.longitude = data.get("lon", -16.686826)
+                st.session_state.gps_obtenu = True
+                st.success(f"✅ Position: {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}")
+            except:
+                pass
         
         st.markdown(f"""
         <div class="gps-card">
@@ -429,7 +490,17 @@ if st.session_state.role == "agent":
         if len(points_valides) > 1:
             coords = [[p["lat"], p["lon"]] for p in points_valides]
             folium.PolyLine(coords, color="blue", weight=3, opacity=0.7).add_to(m)
-            distance_totale = calculer_distance(points_valides)
+            
+            # Calculer distance
+            distance_totale = 0
+            for i in range(1, len(coords)):
+                R = 6371
+                lat1, lon1, lat2, lon2 = map(radians, [coords[i-1][0], coords[i-1][1], coords[i][0], coords[i][1]])
+                dlat = lat2 - lat1
+                dlon = lon2 - lon1
+                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                c = 2 * atan2(sqrt(a), sqrt(1-a))
+                distance_totale += R * c
             st.caption(f"📏 Distance totale parcourue : {distance_totale:.2f} km")
         
         folium_static(m, width=800, height=400)
@@ -584,4 +655,4 @@ with st.expander("🛡️ Consignes de sécurité"):
     5. **Circulation** : Ne restez pas au milieu de la route
     """)
 
-st.caption(f"📍 GPS via streamlit-geolocation | {'Agent: ' + st.session_state.agent_nom if st.session_state.role == 'agent' else 'Dashboard'} | 🗑️ Commune de Mékhé")
+st.caption(f"📍 GPS via JavaScript | {'Agent: ' + st.session_state.agent_nom if st.session_state.role == 'agent' else 'Dashboard'} | 🗑️ Commune de Mékhé")
