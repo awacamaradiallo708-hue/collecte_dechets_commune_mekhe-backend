@@ -1,6 +1,6 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
-Version avec GPS via JavaScript pur (sans module externe)
+Version avec GPS fonctionnel - CORRIGÉE
 """
 
 import streamlit as st
@@ -47,14 +47,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    .dashboard-header {
-        background: linear-gradient(135deg, #1565C0 0%, #0D47A1 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
     .stButton button {
         width: 100%;
         padding: 12px;
@@ -68,17 +60,6 @@ st.markdown("""
         border-radius: 10px;
         text-align: center;
         margin-bottom: 1rem;
-    }
-    .gps-button {
-        background-color: #2196F3;
-        color: white;
-        padding: 10px;
-        border: none;
-        border-radius: 8px;
-        width: 100%;
-        cursor: pointer;
-        font-size: 16px;
-        font-weight: bold;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -109,7 +90,7 @@ if 'collecte2_active' not in st.session_state:
 if 'collecte1_terminee' not in st.session_state:
     st.session_state.collecte1_terminee = False
 
-# Position GPS
+# Position GPS - valeur par défaut (Mékhé)
 if 'latitude' not in st.session_state:
     st.session_state.latitude = 15.121048
 if 'longitude' not in st.session_state:
@@ -117,14 +98,28 @@ if 'longitude' not in st.session_state:
 if 'gps_obtenu' not in st.session_state:
     st.session_state.gps_obtenu = False
 
-# ==================== COMPOSANT GPS HTML ====================
+# ==================== COMPOSANT GPS AVEC CALLBACK ====================
+# Champ caché pour recevoir les données GPS
+gps_receiver = st.text_input("", key="gps_receiver", label_visibility="collapsed")
+
+# Traitement des données GPS reçues
+if gps_receiver:
+    try:
+        data = json.loads(gps_receiver)
+        st.session_state.latitude = data.get("lat", 15.121048)
+        st.session_state.longitude = data.get("lon", -16.686826)
+        st.session_state.gps_obtenu = True
+        st.rerun()
+    except:
+        pass
+
 def get_gps_component():
-    """Composant HTML/JavaScript pour obtenir la position GPS"""
+    """Composant HTML/JavaScript avec communication correcte"""
     return """
-    <div id="gps_status" style="background-color: #f0f0f0; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 10px;">
+    <div id="gps_status" style="background-color: #f0f0f0; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 10px; font-size: 14px;">
         ⚠️ Cliquez sur le bouton pour obtenir votre position
     </div>
-    <button id="gps_button" class="gps-button" onclick="getLocation()">
+    <button id="gps_button" onclick="getLocation()" style="background-color: #2196F3; color: white; padding: 10px; border: none; border-radius: 8px; width: 100%; cursor: pointer; font-size: 16px; font-weight: bold;">
         📍 Obtenir ma position GPS
     </button>
     
@@ -141,20 +136,33 @@ def get_gps_component():
                 function(position) {
                     var lat = position.coords.latitude;
                     var lon = position.coords.longitude;
-                    var timestamp = new Date().toLocaleTimeString();
                     
                     statusDiv.innerHTML = '✅ Position trouvée !<br>Latitude: ' + lat.toFixed(6) + '<br>Longitude: ' + lon.toFixed(6);
                     statusDiv.style.backgroundColor = '#e8f5e9';
                     
-                    var data = JSON.stringify({
-                        lat: lat, 
-                        lon: lon,
-                        timestamp: timestamp
-                    });
+                    var data = JSON.stringify({lat: lat, lon: lon});
                     
-                    var input = document.getElementById('gps_result');
-                    input.value = data;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    // Méthode 1: utiliser un champ input Streamlit
+                    var input = parent.document.querySelector('input[data-testid="stTextInput"]');
+                    if (input && input.id && input.id.includes('gps_receiver')) {
+                        input.value = data;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    
+                    // Méthode 2: utiliser le champ spécifique
+                    var specificInput = parent.document.querySelector('input[key="gps_receiver"]');
+                    if (specificInput) {
+                        specificInput.value = data;
+                        specificInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    
+                    // Méthode 3: stocker dans sessionStorage
+                    sessionStorage.setItem('gps_data', data);
+                    
+                    // Afficher un message
+                    setTimeout(function() {
+                        parent.location.reload();
+                    }, 500);
                 },
                 function(error) {
                     var errorMsg = '';
@@ -209,18 +217,23 @@ with st.sidebar:
         # Afficher le composant GPS
         st.components.v1.html(get_gps_component(), height=200)
         
-        # Champ caché pour recevoir les données GPS
-        gps_data = st.text_input("", key="gps_receiver", label_visibility="collapsed", placeholder="")
-        
-        if gps_data:
-            try:
-                data = json.loads(gps_data)
-                st.session_state.latitude = data.get("lat", 15.121048)
-                st.session_state.longitude = data.get("lon", -16.686826)
-                st.session_state.gps_obtenu = True
-                st.success(f"✅ Position: {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}")
-            except:
-                pass
+        # Bouton de rafraîchissement manuel
+        if st.button("🔄 Mettre à jour la position", use_container_width=True):
+            # Vérifier sessionStorage pour les données GPS
+            st.components.v1.html("""
+            <script>
+            var storedData = sessionStorage.getItem('gps_data');
+            if (storedData) {
+                var input = parent.document.querySelector('input[key="gps_receiver"]');
+                if (input) {
+                    input.value = storedData;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                sessionStorage.removeItem('gps_data');
+                parent.location.reload();
+            }
+            </script>
+            """, height=0)
         
         st.markdown(f"""
         <div class="gps-card">
@@ -230,11 +243,16 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
         
+        if st.session_state.gps_obtenu:
+            st.success("✅ GPS prêt !")
+        else:
+            st.warning("⚠️ Cliquez sur 'Obtenir ma position GPS'")
+        
     else:
         st.session_state.role = "dashboard"
     
     st.markdown("---")
-    st.caption("📍 Cliquez sur 'Obtenir ma position GPS' avant chaque action")
+    st.caption("📍 Cliquez sur le bouton GPS puis sur 'Mettre à jour'")
 
 # ==================== MODE AGENT ====================
 if st.session_state.role == "agent":
@@ -242,7 +260,7 @@ if st.session_state.role == "agent":
     st.markdown("""
     <div class="main-header">
         <h1>🗑️ Agent de Collecte - Mékhé</h1>
-        <p>1. Cliquez sur "Obtenir ma position GPS" | 2. Cliquez sur l'action</p>
+        <p>1. Obtenez votre position GPS | 2. Cliquez sur "Mettre à jour" | 3. Cliquez sur l'action</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -269,7 +287,7 @@ if st.session_state.role == "agent":
     if st.session_state.gps_obtenu:
         st.success(f"📍 GPS prêt - Position: {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}")
     else:
-        st.warning("⚠️ Cliquez sur 'Obtenir ma position GPS' dans la barre latérale")
+        st.warning("⚠️ Cliquez sur 'Obtenir ma position GPS' puis sur 'Mettre à jour'")
     
     st.markdown("---")
     
@@ -281,7 +299,7 @@ if st.session_state.role == "agent":
     with col1:
         if st.button("🚀 DÉPART / DEMM", use_container_width=True, type="primary"):
             if not st.session_state.gps_obtenu:
-                st.error("❌ Obtenez d'abord votre position GPS")
+                st.error("❌ Obtenez d'abord votre position GPS dans la barre latérale")
             else:
                 current_time = datetime.now().strftime("%H:%M:%S")
                 st.session_state.horaires["depart"] = current_time
@@ -535,7 +553,6 @@ if st.session_state.role == "agent":
                 if engine:
                     try:
                         with engine.connect() as conn:
-                            # Supprimer les contraintes NOT NULL
                             try:
                                 conn.execute(text("ALTER TABLE tournees ALTER COLUMN quartier_id DROP NOT NULL;"))
                                 conn.execute(text("ALTER TABLE tournees ALTER COLUMN equipe_id DROP NOT NULL;"))
@@ -598,7 +615,7 @@ if st.session_state.role == "agent":
 # ==================== MODE DASHBOARD ====================
 else:
     st.markdown("""
-    <div class="dashboard-header">
+    <div class="main-header">
         <h1>📊 Tableau de bord - Collecte des déchets</h1>
         <p>Commune de Mékhé</p>
     </div>
@@ -633,7 +650,7 @@ else:
                         folium_static(m, width=800, height=400)
                 
                 st.subheader("📋 Liste des collectes")
-                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2", "heure_depot_depart", "heure_retour_depot"]], use_container_width=True)
+                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], use_container_width=True)
                 
                 if st.button("📥 EXPORTER EN EXCEL"):
                     output = BytesIO()
@@ -655,4 +672,4 @@ with st.expander("🛡️ Consignes de sécurité"):
     5. **Circulation** : Ne restez pas au milieu de la route
     """)
 
-st.caption(f"📍 GPS via JavaScript | {'Agent: ' + st.session_state.agent_nom if st.session_state.role == 'agent' else 'Dashboard'} | 🗑️ Commune de Mékhé")
+st.caption(f"📍 GPS | {'Agent: ' + st.session_state.agent_nom if st.session_state.role == 'agent' else 'Dashboard'} | 🗑️ Commune de Mékhé")
