@@ -372,86 +372,24 @@ if st.session_state.role == "agent":
     col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        if st.button("🚀 DÉPART / DEMM", use_container_width=True, type="primary"):
-            if not st.session_state.gps_obtenu:
-                st.error("❌ Obtenez d'abord votre position GPS")
-            else:
-                current_time = datetime.now().strftime("%H:%M:%S")
-                st.session_state.horaires["depart"] = current_time
-                st.session_state.points.append({
-                    "type": "depart",
-                    "titre": "🏭 Départ du dépôt",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ DÉPART enregistré à {current_time}")
-                st.balloons()
+        if st.button("🚀 DÉPART", use_container_width=True, type="primary"):
+            trigger_gps_script("depart")
     
     with col2:
         if st.button("🗑️ DÉBUT COLLECTE 1", use_container_width=True):
-            if not st.session_state.gps_obtenu:
-                st.error("❌ Obtenez d'abord votre position GPS")
-            else:
-                current_time = datetime.now().strftime("%H:%M:%S")
-                st.session_state.horaires["debut_collecte1"] = current_time
-                st.session_state.points.append({
-                    "type": "debut_collecte1",
-                    "titre": "🗑️ Début collecte 1",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ DÉBUT COLLECTE 1 à {current_time}")
+            trigger_gps_script("debut_collecte1")
     
     with col3:
         if st.button("🏁 FIN COLLECTE 1", use_container_width=True):
-            if not st.session_state.gps_obtenu:
-                st.error("❌ Obtenez d'abord votre position GPS")
-            else:
-                current_time = datetime.now().strftime("%H:%M:%S")
-                st.session_state.horaires["fin_collecte1"] = current_time
-                st.session_state.collecte1_terminee = True
-                st.session_state.points.append({
-                    "type": "fin_collecte1",
-                    "titre": "🏁 Fin collecte 1",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ FIN COLLECTE 1 à {current_time}")
+            trigger_gps_script("fin_collecte1")
     
     with col4:
-        if st.button("🚛 VIDAGE DÉCHARGE 1", use_container_width=True):
-            if not st.session_state.gps_obtenu:
-                st.error("❌ Obtenez d'abord votre position GPS")
-            else:
-                current_time = datetime.now().strftime("%H:%M:%S")
-                st.session_state.horaires["decharge1"] = current_time
-                st.session_state.points.append({
-                    "type": "decharge1",
-                    "titre": "🚛 Vidage décharge 1",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ VIDAGE DÉCHARGE 1 à {current_time}")
+        if st.button("🚛 VIDAGE 1", use_container_width=True):
+            trigger_gps_script("decharge1")
     
     with col5:
-        if st.button("🏁 RETOUR / FANAN", use_container_width=True):
-            if not st.session_state.gps_obtenu:
-                st.error("❌ Obtenez d'abord votre position GPS")
-            else:
-                current_time = datetime.now().strftime("%H:%M:%S")
-                st.session_state.horaires["retour"] = current_time
-                st.session_state.points.append({
-                    "type": "retour",
-                    "titre": "🏁 Retour au dépôt",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ RETOUR enregistré à {current_time}")
+        if st.button("🏁 RETOUR", use_container_width=True):
+            trigger_gps_script("retour")
     
     st.markdown("---")
     
