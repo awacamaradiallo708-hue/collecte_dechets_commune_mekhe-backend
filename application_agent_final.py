@@ -257,53 +257,30 @@ if st.session_state.role == "agent":
         ("decharge1", t["step_vidage1"]),
     ]
 
-    # Ajout de la collecte 2 si activée
+    # Choix pour activer la collecte 2
     if st.session_state.collecte1_terminee and not st.session_state.collecte2_active:
-        st.markdown("### 🚛 COLLECTE 2 (OPTIONNELLE)")
+        st.markdown("---")
+        st.markdown(f"### 🚛 {t['add_collecte2']} ?")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button(t["add_collecte2"], use_container_width=True):
+            if st.button(f"✅ {t['add_collecte2']}", use_container_width=True):
                 st.session_state.collecte2_active = True
                 st.rerun()
         with col2:
-            if st.button(t["skip_collecte2"], use_container_width=True):
+            if st.button(f"⏭️ {t['skip_collecte2']}", use_container_width=True):
                 st.session_state.collecte2_active = True
-                st.info("Collecte 2 ignorée")
+                st.session_state.horaires["debut_collecte2"] = "N/A" # Marqueur pour ignorer
                 st.rerun()
     
-    if st.session_state.collecte2_active and "fin_collecte2" not in st.session_state.horaires:
-        st.markdown("---")
-        st.markdown("## 🚛 COLLECTE 2")
-        
-        # DÉBUT COLLECTE 2
-        st.markdown(f"### {t['step_debut2']}")
-        if st.button("✅ Enregistrer DÉBUT COLLECTE 2", key="btn_debut2", use_container_width=True):
-            if enregistrer_etape("debut_collecte2", t['step_debut2']):
-                st.rerun()
-        if "debut_collecte2" in st.session_state.horaires:
-            st.success(f"✅ DÉBUT COLLECTE 2 à {st.session_state.horaires['debut_collecte2']}")
-        
-        # FIN COLLECTE 2
-        st.markdown(f"### {t['step_fin2']}")
-        if st.button("✅ Enregistrer FIN COLLECTE 2", key="btn_fin2", use_container_width=True):
-            if enregistrer_etape("fin_collecte2", t['step_fin2']):
-                st.rerun()
-        if "fin_collecte2" in st.session_state.horaires:
-            st.success(f"✅ FIN COLLECTE 2 à {st.session_state.horaires['fin_collecte2']}")
-        
-        # VIDAGE DÉCHARGE 2
-        st.markdown(f"### {t['step_vidage2']}")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            if st.button("✅ Enregistrer VIDAGE 2", key="btn_vidage2", use_container_width=True):
-                if enregistrer_etape("decharge2", t['step_vidage2']):
-                    st.rerun()
-        with col2:
-            v2 = st.number_input(t['vol'], 0.0, 30.0, st.session_state.volumes["collecte2"], 0.5, key="vol2")
-            if v2 != st.session_state.volumes["collecte2"]:
-                st.session_state.volumes["collecte2"] = v2
-        if "decharge2" in st.session_state.horaires:
-            st.success(f"✅ VIDAGE 2 à {st.session_state.horaires['decharge2']}")
+    # Extension de la liste si Collecte 2 active
+    if st.session_state.collecte2_active and st.session_state.horaires.get("debut_collecte2") != "N/A":
+        etapes.extend([
+            ("debut_collecte2", t["step_debut2"]),
+            ("fin_collecte2", t["step_fin2"]),
+            ("decharge2", t["step_vidage2"]),
+        ])
+    
+    etapes.append(("retour", t["step_retour"]))
     
     st.markdown("---")
     
@@ -427,7 +404,10 @@ if st.session_state.role == "agent":
                                 "retour": st.session_state.horaires.get("retour"),
                                 "debut1": st.session_state.horaires.get("debut_collecte1"),
                                 "fin1": st.session_state.horaires.get("fin_collecte1"),
-                                "decharge1": st.session_state.horaires.get("decharge1")
+                                "decharge1": st.session_state.horaires.get("decharge1"),
+                                "debut2": st.session_state.horaires.get("debut_collecte2") if st.session_state.horaires.get("debut_collecte2") != "N/A" else None,
+                                "fin2": st.session_state.horaires.get("fin_collecte2"),
+                                "decharge2": st.session_state.horaires.get("decharge2")
                             })
                             tournee_id = result.fetchone()[0]
                             
@@ -438,8 +418,8 @@ if st.session_state.role == "agent":
                                 """), {
                                     "tid": tournee_id,
                                     "type": point["type"],
-                                    "lat": point["lat"],
-                                    "lon": point["lon"],
+                                    "p_lat": point["lat"],
+                                    "p_lon": point["lon"],
                                     "heure": point["heure"]
                                 })
                             conn.commit()
