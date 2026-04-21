@@ -550,13 +550,26 @@ else:
                 with col4:
                     st.metric("🏘️ Quartiers", df_tournees["quartier_nom"].nunique())
 
-                # --- STATISTIQUES PAR QUARTIER ---
-                st.markdown("### 📊 Production de déchets par quartier (m³)")
-                prod_q = df_tournees.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False).reset_index()
-                fig_prod = px.bar(prod_q, x='quartier_nom', y='volume_m3', 
-                                 color='volume_m3', color_continuous_scale='Greens',
-                                 labels={'quartier_nom': 'Quartier', 'volume_m3': 'Volume (m³)'})
-                st.plotly_chart(fig_prod, use_container_width=True)
+                # --- ANALYSE DE PRODUCTION ---
+                col_chart1, col_charts2 = st.columns(2)
+                
+                with col_chart1:
+                    st.markdown("#### 📊 Par quartier (m³)")
+                    prod_q = df_tournees.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False).reset_index()
+                    fig_prod = px.bar(prod_q, x='quartier_nom', y='volume_m3', 
+                                     color='volume_m3', color_continuous_scale='Greens',
+                                     labels={'quartier_nom': 'Quartier', 'volume_m3': 'Volume (m³)'})
+                    st.plotly_chart(fig_prod, use_container_width=True)
+                
+                with col_charts2:
+                    st.markdown("#### 📈 Évolution Hebdomadaire (m³)")
+                    df_tournees['date_dt'] = pd.to_datetime(df_tournees['date_tournee'])
+                    df_tournees['semaine'] = df_tournees['date_dt'].dt.strftime('%Y - S%V')
+                    evol_hebdo = df_tournees.groupby('semaine')['volume_m3'].sum().reset_index().sort_values('semaine')
+                    fig_evol = px.line(evol_hebdo, x='semaine', y='volume_m3', 
+                                      markers=True, color_discrete_sequence=['#1B5E20'],
+                                      labels={'semaine': 'Semaine', 'volume_m3': 'Volume (m³)'})
+                    st.plotly_chart(fig_evol, use_container_width=True)
                 
                 if not df_points.empty:
                     st.subheader("🗺️ Suivi des Itinéraires de Collecte")
@@ -564,6 +577,19 @@ else:
                     points_map = df_points.dropna(subset=["lat", "lon"])
                     if not points_map.empty:
                         m = folium.Map(location=[points_map["lat"].mean(), points_map["lon"].mean()], zoom_start=13)
+                        
+                        # --- SUPERPOSITION DES CIRCUITS THÉORIQUES (Fichiers GeoJSON) ---
+                        # On cherche les circuits dans le dossier itineraire_de_collecte
+                        folder_circuits = "itineraire_de_collecte"
+                        if os.path.exists(folder_circuits):
+                            for file in os.listdir(folder_circuits):
+                                if file.endswith(".geojson") or file.endswith(".json"):
+                                    folium.GeoJson(
+                                        os.path.join(folder_circuits, file),
+                                        name=f"Circuit Théorique: {file}",
+                                        style_function=lambda x: {'color': 'red', 'weight': 2, 'dashArray': '5, 5', 'fillOpacity': 0},
+                                        tooltip="Itinéraire défini"
+                                    ).add_to(m)
                         
                         # Tracer les lignes pour chaque tournée pour voir l'itinéraire
                         for tid in points_map['tournee_id'].unique():
@@ -582,6 +608,7 @@ else:
                                 color="green" if p['type_point'] == 'depart' else "red",
                                 fill=True
                             ).add_to(m)
+                        folium.LayerControl().add_to(m)
                         folium_static(m, width=800, height=400)
 
                 # --- EXPORTS ---
