@@ -10,7 +10,8 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
-import calendar # Keep calendar for date calculations
+import calendar
+import plotly.express as px
 
 from io import BytesIO
 import re
@@ -584,46 +585,6 @@ else:
                         folium_static(m, width=800, height=400)
 
                 # --- EXPORTS ---
-                st.markdown("---")
-                st.subheader("📥 Génération de Rapports (Word)")
-                
-                # Préparation des données pour le filtrage temporel
-                df_tournees['date_dt'] = pd.to_datetime(df_tournees['date_tournee'])
-                df_tournees['semaine'] = df_tournees['date_dt'].dt.isocalendar().week
-                df_tournees['mois'] = df_tournees['date_dt'].dt.month
-                df_tournees['annee'] = df_tournees['date_dt'].dt.year
-
-                col_rep1, col_rep2, col_rep3 = st.columns([1, 1, 2])
-                
-                with col_rep1:
-                    type_r = st.selectbox("Période", ["Hebdomadaire", "Mensuel"])
-                
-                with col_rep2:
-                    if type_r == "Hebdomadaire":
-                        semaines = sorted(df_tournees['semaine'].unique(), reverse=True)
-                        choix_p = st.selectbox("Choisir Semaine", semaines)
-                        df_rapport = df_tournees[df_tournees['semaine'] == choix_p]
-                        nom_p = f"Semaine {choix_p} - {date.today().year}"
-                    else:
-                        mois = sorted(df_tournees['mois'].unique(), reverse=True)
-                        choix_p = st.selectbox("Choisir Mois", mois, format_func=lambda x: calendar.month_name[x])
-                        df_rapport = df_tournees[df_tournees['mois'] == choix_p]
-                        nom_p = f"Mois de {calendar.month_name[choix_p]} {date.today().year}"
-
-                with col_rep3:
-                    st.write(f"📝 {len(df_rapport)} tournées sélectionnées")
-                    if not df_rapport.empty and Document is not None:
-                        docx_data = generer_rapport_docx(df_rapport, nom_p)
-                        st.download_button(
-                            label=f"📥 Télécharger Rapport {type_r}",
-                            data=docx_data,
-                            file_name=f"Rapport_{type_r}_{nom_p.replace(' ', '_')}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
-                        )
-                    elif Document is None:
-                        st.error("Module 'docx' manquant. Rapport indisponible.")
-                
                 st.subheader("📋 Liste des collectes")
                 st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], use_container_width=True)
                 
