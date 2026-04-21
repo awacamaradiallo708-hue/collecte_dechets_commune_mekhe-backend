@@ -17,7 +17,7 @@ from math import radians, sin, cos, sqrt, atan2
 
 # ==================== CONNEXION BASE NEON.TECH ====================
 # Note: Il est recommandé de stocker ceci dans des variables d'environnement
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
 
 @st.cache_resource
 def init_connection():
@@ -468,7 +468,7 @@ if st.session_state.role == "agent":
                                 "decharge1": st.session_state.horaires.get("decharge1"),
                                 "debut2": st.session_state.horaires.get("debut_collecte2") if st.session_state.horaires.get("debut_collecte2") != "N/A" else None,
                                 "fin2": st.session_state.horaires.get("fin_collecte2"),
-                                "decharge2": st.session_state.horaires.get("decharge2")
+                                "decharge2": st.session_state.horaires.get("decharge2"),
                                 "incident": st.session_state.incident,
                                 "type_tracteur": st.session_state.type_tracteur,
                                 "numero_parc": st.session_state.numero_parc
