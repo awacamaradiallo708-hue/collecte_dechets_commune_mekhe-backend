@@ -612,6 +612,7 @@ else:
                         folder_circuits = next((f for f in folder_variants if os.path.exists(f)), None)
                         
                         couleurs_circuits = ["#FF0000", "#2E7D32", "#FF9800", "#9C27B0", "#00BCD4"] # Rouge, Vert, Orange, Violet, Bleu ciel
+                        legend_items = ""
                         
                         if folder_circuits:
                             files = [f for f in os.listdir(folder_circuits) if f.endswith((".geojson", ".json"))]
