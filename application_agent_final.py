@@ -584,25 +584,49 @@ else:
                         
                         if os.path.exists(folder_circuits):
                             files = [f for f in os.listdir(folder_circuits) if f.endswith((".geojson", ".json"))]
-                            for i, file in enumerate(files):
-                                color = couleurs_circuits[i % len(couleurs_circuits)]
-                                path = os.path.join(folder_circuits, file)
-                                try:
-                                    with open(path, 'r', encoding='utf-8') as f:
-                                        geojson_data = json.load(f)
-                                        folium.GeoJson(
-                                            geojson_data,
-                                            name=f"Circuit: {file}",
-                                            style_function=lambda x, col=color: {
-                                                'color': col, 
-                                                'weight': 4, 
-                                                'dashArray': '5, 10', 
-                                                'fillOpacity': 0
-                                            },
-                                            tooltip=f"Itinéraire théorique ({file})"
-                                        ).add_to(m)
-                                except Exception as e:
-                                    st.error(f"Erreur lecture {file}: {e}")
+                            if files:
+                                with st.expander("🔍 Diagnostic des fichiers circuits JSON"):
+                                    for i, file in enumerate(files):
+                                        color = couleurs_circuits[i % len(couleurs_circuits)]
+                                        path = os.path.join(folder_circuits, file)
+                                        try:
+                                            with open(path, 'r', encoding='utf-8') as f:
+                                                geojson_data = json.load(f)
+                                                
+                                                # Extraction d'un échantillon de coordonnées pour diagnostic
+                                                sample = None
+                                                if "features" in geojson_data and geojson_data["features"]:
+                                                    geom = geojson_data["features"][0].get("geometry", {})
+                                                    coords = geom.get("coordinates", [])
+                                                    sample = coords[0] if geom.get("type") == "LineString" else coords
+                                                
+                                                if sample and isinstance(sample, list):
+                                                    lon_s, lat_s = sample[0], sample[1]
+                                                    # Diagnostic
+                                                    if abs(lon_s) > 180 or abs(lat_s) > 90:
+                                                        st.error(f"❌ **{file}** : Système projeté détecté (mètres). Utilisez WGS 84.")
+                                                    elif lat_s < 0: # Mékhé est à +15.11
+                                                        st.warning(f"⚠️ **{file}** : Coordonnées suspectes ({lon_s}, {lat_s}). L'ordre est-il bien [Longitude, Latitude] ?")
+                                                    else:
+                                                        st.success(f"✅ **{file}** : Format WGS 84 valide détecté.")
+                                                    
+                                                    folium.GeoJson(
+                                                        geojson_data,
+                                                        name=f"Circuit: {file}",
+                                                        style_function=lambda x, col=color: {
+                                                            'color': col, 
+                                                            'weight': 4, 
+                                                            'dashArray': '5, 10', 
+                                                            'fillOpacity': 0
+                                                        },
+                                                        tooltip=f"Itinéraire théorique ({file})"
+                                                    ).add_to(m)
+                                                else:
+                                                    st.warning(f"❓ **{file}** : Structure GeoJSON non standard.")
+                                        except Exception as e:
+                                            st.error(f"💥 Erreur sur {file}: {e}")
+                            else:
+                                st.info("ℹ️ Aucun fichier trouvé dans 'itineraire_de_collecte'")
                         
                         # Tracer les lignes pour chaque tournée pour voir l'itinéraire
                         for tid in points_map['tournee_id'].unique():
