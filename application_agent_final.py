@@ -579,17 +579,30 @@ else:
                         m = folium.Map(location=[points_map["lat"].mean(), points_map["lon"].mean()], zoom_start=13)
                         
                         # --- SUPERPOSITION DES CIRCUITS THÉORIQUES (Fichiers GeoJSON) ---
-                        # On cherche les circuits dans le dossier itineraire_de_collecte
                         folder_circuits = "itineraire_de_collecte"
+                        couleurs_circuits = ["#FF0000", "#2E7D32", "#FF9800", "#9C27B0", "#00BCD4"] # Rouge, Vert, Orange, Violet, Bleu ciel
+                        
                         if os.path.exists(folder_circuits):
-                            for file in os.listdir(folder_circuits):
-                                if file.endswith(".geojson") or file.endswith(".json"):
-                                    folium.GeoJson(
-                                        os.path.join(folder_circuits, file),
-                                        name=f"Circuit Théorique: {file}",
-                                        style_function=lambda x: {'color': 'red', 'weight': 2, 'dashArray': '5, 5', 'fillOpacity': 0},
-                                        tooltip="Itinéraire défini"
-                                    ).add_to(m)
+                            files = [f for f in os.listdir(folder_circuits) if f.endswith((".geojson", ".json"))]
+                            for i, file in enumerate(files):
+                                color = couleurs_circuits[i % len(couleurs_circuits)]
+                                path = os.path.join(folder_circuits, file)
+                                try:
+                                    with open(path, 'r', encoding='utf-8') as f:
+                                        geojson_data = json.load(f)
+                                        folium.GeoJson(
+                                            geojson_data,
+                                            name=f"Circuit: {file}",
+                                            style_function=lambda x, col=color: {
+                                                'color': col, 
+                                                'weight': 4, 
+                                                'dashArray': '5, 10', 
+                                                'fillOpacity': 0
+                                            },
+                                            tooltip=f"Itinéraire théorique ({file})"
+                                        ).add_to(m)
+                                except Exception as e:
+                                    st.error(f"Erreur lecture {file}: {e}")
                         
                         # Tracer les lignes pour chaque tournée pour voir l'itinéraire
                         for tid in points_map['tournee_id'].unique():
@@ -608,7 +621,11 @@ else:
                                 color="green" if p['type_point'] == 'depart' else "red",
                                 fill=True
                             ).add_to(m)
+                        
                         folium.LayerControl().add_to(m)
+                        
+                        # Ajuster la vue pour voir à la fois Louga et Mékhé si nécessaire
+                        m.fit_bounds(m.get_bounds())
                         folium_static(m, width=800, height=400)
 
                 # --- EXPORTS ---
