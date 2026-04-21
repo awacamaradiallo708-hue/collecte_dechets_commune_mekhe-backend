@@ -539,23 +539,47 @@ else:
             if df_tournees.empty:
                 st.info("📭 Aucune collecte enregistrée")
             else:
+                # --- PRÉPARATION DES DONNÉES ET FILTRAGE PAR SEMAINE ---
+                df_tournees['date_dt'] = pd.to_datetime(df_tournees['date_tournee'])
+                df_tournees['semaine_label'] = df_tournees['date_dt'].dt.strftime('%Y - Semaine %V')
+                
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("📅 Archive des semaines")
+                liste_semaines = ["Toutes les données"] + sorted(df_tournees['semaine_label'].unique().tolist(), reverse=True)
+                semaine_choisie = st.sidebar.selectbox("Sélectionner une semaine pour l'archive", liste_semaines)
+                
+                if semaine_choisie != "Toutes les données":
+                    df_dash = df_tournees[df_tournees['semaine_label'] == semaine_choisie].copy()
+                    # Filtrer aussi les points pour la carte
+                    ids_filtres = df_dash['id'].tolist()
+                    df_points_dash = df_points[df_points['tournee_id'].isin(ids_filtres)].copy()
+                    
+                    # Aide pour le rapport mensuel
+                    mois_choisi = df_dash['date_dt'].iloc[0].strftime('%B %Y')
+                    vol_mois = df_tournees[df_tournees['date_dt'].dt.strftime('%B %Y') == mois_choisi]['volume_m3'].sum()
+                    st.sidebar.success(f"📊 **Mois : {mois_choisi}**\n\nCumul mensuel : {vol_mois:.1f} m³")
+                    st.info(f"📅 Affichage des résultats pour : **{semaine_choisie}**")
+                else:
+                    df_dash = df_tournees.copy()
+                    df_points_dash = df_points.copy()
+
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("📋 Collectes", len(df_tournees))
+                    st.metric("📋 Collectes", len(df_dash))
                 with col2:
-                    total_volume = df_tournees["volume_collecte1"].sum() + df_tournees["volume_collecte2"].sum()
+                    total_volume = df_dash["volume_collecte1"].sum() + df_dash["volume_collecte2"].sum()
                     st.metric("📦 Volume total", f"{total_volume:.1f} m³")
                 with col3:
-                    st.metric("📍 Points GPS", len(df_points))
+                    st.metric("📍 Points GPS", len(df_points_dash))
                 with col4:
-                    st.metric("🏘️ Quartiers", df_tournees["quartier_nom"].nunique())
+                    st.metric("🏘️ Quartiers", df_dash["quartier_nom"].nunique())
 
                 # --- ANALYSE DE PRODUCTION ---
                 col_chart1, col_charts2 = st.columns(2)
                 
                 with col_chart1:
-                    st.markdown("#### 📊 Par quartier (m³)")
-                    prod_q = df_tournees.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False).reset_index()
+                    st.markdown(f"#### 📊 Par quartier ({'Semaine' if semaine_choisie != 'Toutes les données' else 'Total'})")
+                    prod_q = df_dash.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False).reset_index()
                     fig_prod = px.bar(prod_q, x='quartier_nom', y='volume_m3', 
                                      color='volume_m3', color_continuous_scale='Greens',
                                      labels={'quartier_nom': 'Quartier', 'volume_m3': 'Volume (m³)'})
