@@ -196,6 +196,21 @@ def exporter_excel(session):
         df_points.to_excel(writer, sheet_name="Points et Horaires", index=False)
     return output.getvalue()
 
+# ==================== FONCTIONS DE RECHERCHE ID ====================
+def get_quartier_id(nom):
+    """Récupère l'ID d'un quartier à partir de son nom."""
+    if not engine: return None
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT id FROM quartiers WHERE nom = :nom"), {"nom": nom}).first()
+        return result[0] if result else None
+
+def get_equipe_id(nom):
+    """Récupère l'ID d'une équipe à partir de son nom."""
+    if not engine: return None
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT id FROM equipes WHERE nom = :nom"), {"nom": nom}).first()
+        return result[0] if result else None
+
 # ==================== SIDEBAR ====================
 with st.sidebar:
     st.session_state.lang = st.selectbox("🌍 Langue / Kàllaama", ["Français", "Wolof"])
@@ -304,9 +319,17 @@ if st.session_state.role == "agent":
                         if match:
                             now = datetime.now().strftime("%H:%M:%S")
                             st.session_state.horaires[code] = now
+                            
+                            collecte_num = None
+                            if code in ["depart", "debut_collecte1", "fin_collecte1", "decharge1"]:
+                                collecte_num = 1
+                            elif code in ["debut_collecte2", "fin_collecte2", "decharge2"]:
+                                collecte_num = 2
                             st.session_state.points.append({
                                 "type": code, "titre": nom_etape, "heure": now,
-                                "lat": float(match.group(1)), "lon": float(match.group(2))
+                                "lat": float(match.group(1)), "lon": float(match.group(2)),
+                                "description": nom_etape, # Utiliser le nom de l'étape comme description
+                                "collecte_numero": collecte_num
                             })
                             if code == "fin_collecte1": st.session_state.collecte1_terminee = True
                             st.rerun()
@@ -422,11 +445,12 @@ if st.session_state.role == "agent":
                                     heure_debut_collecte1, heure_fin_collecte1,
                                     heure_arrivee_decharge1, 
                                     heure_debut_collecte2, heure_fin_collecte2, heure_arrivee_decharge2,
-                                    statut
+                                    statut, incident, type_tracteur, numero_parc
                                 ) VALUES (
                                     :date, :agent, :qid, :eid,
                                     :vol1, :vol2, :vol_t, :dist,
-                                    :depart, :retour, :debut1, :fin1, :decharge1, :debut2, :fin2, :decharge2, 'termine'
+                                    :depart, :retour, :debut1, :fin1, :decharge1, :debut2, :fin2, :decharge2,
+                                    'termine', :incident, :type_tracteur, :numero_parc
                                 ) RETURNING id
                             """), {
                                 "date": date.today(),
@@ -445,19 +469,24 @@ if st.session_state.role == "agent":
                                 "debut2": st.session_state.horaires.get("debut_collecte2") if st.session_state.horaires.get("debut_collecte2") != "N/A" else None,
                                 "fin2": st.session_state.horaires.get("fin_collecte2"),
                                 "decharge2": st.session_state.horaires.get("decharge2")
+                                "incident": st.session_state.incident,
+                                "type_tracteur": st.session_state.type_tracteur,
+                                "numero_parc": st.session_state.numero_parc
                             })
                             tournee_id = result.fetchone()[0]
                             
                             for point in st.session_state.points:
                                 conn.execute(text("""
-                                    INSERT INTO points_arret (tournee_id, type_point, lat, lon, heure)
-                                    VALUES (:tid, :type, :p_lat, :p_lon, :heure)
+                                    INSERT INTO points_arret (tournee_id, type_point, lat, lon, heure, description, collecte_numero)
+                                    VALUES (:tid, :type, :p_lat, :p_lon, :heure, :desc, :collecte_num)
                                 """), {
                                     "tid": tournee_id,
                                     "type": point["type"],
                                     "p_lat": point["lat"],
                                     "p_lon": point["lon"],
-                                    "heure": point["heure"]
+                                    "heure": point["heure"],
+                                    "desc": point["description"],
+                                    "collecte_num": point["collecte_numero"]
                                 })
                             conn.commit()
                     except Exception as e:
