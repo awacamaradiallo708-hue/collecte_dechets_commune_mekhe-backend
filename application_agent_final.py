@@ -282,7 +282,6 @@ if st.session_state.role == "agent":
                 if code in ["decharge1", "decharge2"]:
                     v_key = "vol1" if code == "decharge1" else "vol2"
                     v_state = "collecte1" if code == "decharge1" else "collecte2"
-                    v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, 0.0, 0.5, key="vol1")
                     v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, 0.0, 0.5, key=v_key)
                     st.session_state.volumes[v_state] = v1
 
