@@ -104,6 +104,7 @@ LANGS = {
         "step_fin2": "🏁 FIN COLLECTE 2",
         "step_vidage2": "🚛 VIDAGE DÉCHARGE 2",
         "add_collecte2": "➕ AJOUTER UNE 2ÈME COLLECTE",
+        "skip_collecte2": "⏭️ PASSER DIRECTEMENT AU RETOUR",
         "step_retour": "🏁 RETOUR AU DÉPÔT",
         "save": "Enregistrer cette étape",
         "success_save": "Étape enregistrée à",
@@ -133,6 +134,7 @@ LANGS = {
         "step_fin2": "🏁 JEEXAL WECCI 2",
         "step_vidage2": "🚛 SOTTI 2",
         "add_collecte2": "➕ YOKKU WECCI 2",
+        "skip_collecte2": "⏭️ ÑIBI LÉÉGI",
         "step_retour": "🏁 ÑIBI",
         "save": "Bind li am",
         "success_save": "Bind nañ ko ci",
@@ -257,9 +259,13 @@ if st.session_state.role == "agent":
 
     # Ajout de la collecte 2 si activée
     if st.session_state.collecte1_terminee and not st.session_state.collecte2_active:
-        if st.button(t["add_collecte2"], use_container_width=True):
-            st.session_state.collecte2_active = True
-            st.rerun()
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            if st.button(t["add_collecte2"], use_container_width=True, type="secondary"):
+                st.session_state.collecte2_active = True
+                st.rerun()
+        with col_opt2:
+            st.button(t["skip_collecte2"], use_container_width=True)
 
     if st.session_state.collecte2_active:
         etapes.extend([
@@ -282,7 +288,7 @@ if st.session_state.role == "agent":
                 if code in ["decharge1", "decharge2"]:
                     v_key = "vol1" if code == "decharge1" else "vol2"
                     v_state = "collecte1" if code == "decharge1" else "collecte2"
-                    v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, 0.0, 0.5, key=v_key)
+                    v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, st.session_state.volumes[v_state], 0.5, key=v_key)
                     st.session_state.volumes[v_state] = v1
 
                 if st.button(t["save"], key=f"btn_{code}"):
@@ -405,11 +411,13 @@ if st.session_state.role == "agent":
                                     volume_collecte1, volume_collecte2, volume_m3, distance_parcourue_km,
                                     heure_depot_depart, heure_retour_depot,
                                     heure_debut_collecte1, heure_fin_collecte1,
-                                    heure_arrivee_decharge1, statut
+                                    heure_arrivee_decharge1, 
+                                    heure_debut_collecte2, heure_fin_collecte2, heure_arrivee_decharge2,
+                                    statut
                                 ) VALUES (
                                     :date, :agent, 
                                     :vol1, :vol2, :vol_t, :dist,
-                                    :depart, :retour, :debut1, :fin1, :decharge1, 'termine'
+                                    :depart, :retour, :debut1, :fin1, :decharge1, :debut2, :fin2, :decharge2, 'termine'
                                 ) RETURNING id
                             """), {
                                 "date": date.today(),
@@ -422,7 +430,10 @@ if st.session_state.role == "agent":
                                 "retour": st.session_state.horaires.get("retour"),
                                 "debut1": st.session_state.horaires.get("debut_collecte1"),
                                 "fin1": st.session_state.horaires.get("fin_collecte1"),
-                                "decharge1": st.session_state.horaires.get("decharge1") or st.session_state.horaires.get("retour")
+                                "decharge1": st.session_state.horaires.get("decharge1"),
+                                "debut2": st.session_state.horaires.get("debut_collecte2"),
+                                "fin2": st.session_state.horaires.get("fin_collecte2"),
+                                "decharge2": st.session_state.horaires.get("decharge2")
                             })
                             tournee_id = result.fetchone()[0]
                             
