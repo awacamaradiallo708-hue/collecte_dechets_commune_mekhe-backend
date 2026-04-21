@@ -603,6 +603,15 @@ else:
                     df_dash = df_tournees.copy()
                     df_points_dash = df_points.copy()
 
+                # --- FILTRE INCIDENTS ---
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("⚠️ Alertes")
+                voir_incidents_seuls = st.sidebar.checkbox("🚩 Voir uniquement les incidents")
+                if voir_incidents_seuls:
+                    df_dash = df_dash[df_dash['incident'] != "Aucun"].copy()
+                    ids_restants = df_dash['id'].tolist()
+                    df_points_dash = df_points_dash[df_points_dash['tournee_id'].isin(ids_restants)].copy()
+
                 # --- FILTRE PAR COORDONNÉES DE DÉPART ---
                 # Permet de filtrer les tournées qui commencent près d'un point GPS spécifique
                 # Utile pour analyser les itinéraires d'un secteur particulier
@@ -658,7 +667,7 @@ else:
                     except Exception as e:
                         st.error(f"❌ Erreur lors du filtrage: {e}")
 
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("📋 Collectes", len(df_dash))
                 with col2:
@@ -668,6 +677,16 @@ else:
                     st.metric("📍 Points GPS", len(df_points_dash))
                 with col4:
                     st.metric("🏘️ Quartiers", df_dash["quartier_nom"].nunique())
+                with col5:
+                    nb_incidents = len(df_dash[df_dash['incident'] != "Aucun"])
+                    st.metric("⚠️ Incidents", nb_incidents, delta=nb_incidents if nb_incidents > 0 else None, delta_color="inverse")
+
+                # --- AFFICHAGE DES ALERTES INCIDENTS ---
+                if nb_incidents > 0:
+                    with st.expander("🚨 DÉTAILS DES PROBLÈMES SIGNALÉS", expanded=True):
+                        df_incidents = df_dash[df_dash['incident'] != "Aucun"][["date_tournee", "agent_nom", "quartier_nom", "incident"]]
+                        for _, row in df_incidents.iterrows():
+                            st.warning(f"**{row['date_tournee']} - {row['quartier_nom']}** ({row['agent_nom']}) : {row['incident']}")
 
                 # --- ANALYSE DE PRODUCTION ---
                 col_chart1, col_charts2 = st.columns(2)
@@ -748,7 +767,8 @@ else:
                                                     ).add_to(m)
                                                     
                                                     # Ajout du circuit à la légende HTML
-                                                    legend_items += f'<i class="fa fa-minus" style="color:{color}"></i> &nbsp; {file} <br>'
+                                                    clean_name = file.replace('.geojson', '').replace('.json', '')
+                                                    legend_items += f'<div style="margin-bottom:5px;"><span style="display:inline-block; width:25px; height:12px; background-color:{color}; margin-right:10px; vertical-align:middle; border:1px solid #333;"></span> {clean_name}</div>'
                                                 else:
                                                     st.warning(f"❓ **{file}** : Structure GeoJSON non standard.")
                                         except Exception as e:
@@ -770,7 +790,7 @@ else:
                                          <b>📋 Circuits de Collecte</b> <br>
                                          {legend_items}
                                          <hr style="margin: 5px 0;">
-                                         <i class="fa fa-minus" style="color:blue; font-weight:bold"></i> &nbsp; <b>Trajet réel agents</b>
+                                         <div><span style="display:inline-block; width:25px; height:3px; background-color:blue; margin-right:10px; vertical-align:middle;"></span> <b>Parcours réel</b></div>
                                          </div>
                                          '''
                                     m.get_root().html.add_child(folium.Element(legend_html))
@@ -807,7 +827,7 @@ else:
 
                 # --- EXPORTS ---
                 st.subheader("📋 Liste des collectes")
-                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], use_container_width=True)
+                st.dataframe(df_dash[["date_tournee", "agent_nom", "quartier_nom", "volume_m3", "incident"]], use_container_width=True)
                 
                 output_excel = BytesIO()
                 with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
@@ -836,4 +856,3 @@ with st.expander("🛡️ Consignes de sécurité"):
     """)
 
 st.caption(f"📍 GPS via composant HTML | {'Agent: ' + st.session_state.agent_nom if st.session_state.role == 'agent' else 'Dashboard'} | 🗑️ Commune de Mékhé")
-
