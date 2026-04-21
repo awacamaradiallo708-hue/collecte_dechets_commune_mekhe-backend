@@ -1,6 +1,18 @@
 """
 APPLICATION AGENT DE COLLECTE - COMMUNE DE MÉKHÉ
 Version avec GPS via composant HTML/JS personnalisé
+
+Cette application Streamlit permet aux agents de terrain de suivre leurs tournées de collecte de déchets
+en enregistrant les points GPS et horaires des différentes étapes. Elle offre également un mode dashboard
+pour visualiser les statistiques et itinéraires des collectes passées.
+
+Fonctionnalités principales :
+- Enregistrement des étapes de collecte avec coordonnées GPS
+- Calcul automatique des distances parcourues
+- Export des données en Excel
+- Visualisation cartographique avec Folium
+- Support multilingue (Français/Wolof)
+- Intégration avec base de données PostgreSQL
 """
 
 import streamlit as st
@@ -19,6 +31,9 @@ import os
 from math import radians, sin, cos, sqrt, atan2
 
 # ==================== CONNEXION BASE NEON.TECH ====================
+# Configuration de la connexion à la base de données PostgreSQL hébergée sur Neon.tech
+# Utilise une variable d'environnement pour la sécurité, avec fallback vers une URL par défaut
+# La connexion est mise en cache pour éviter les reconnexions répétées
 # Note: Il est recommandé de stocker ceci dans des variables d'environnement
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
 
@@ -36,6 +51,8 @@ def init_connection():
 engine = init_connection()
 
 # ==================== CONFIGURATION PAGE ====================
+# Configuration de l'apparence de l'application Streamlit
+# Définit le titre, l'icône et la mise en page large pour une meilleure utilisation
 st.set_page_config(
     page_title="Collecte Déchets - Mékhé",
     page_icon="🗑️",
@@ -43,6 +60,8 @@ st.set_page_config(
 )
 
 # ==================== STYLE ====================
+# Définition des styles CSS personnalisés pour améliorer l'apparence de l'interface
+# Inclut des classes pour l'en-tête principal, les boutons GPS, la boîte de langue, etc.
 st.markdown("""
     <style>
     .main-header {
@@ -88,6 +107,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==================== TRADUCTIONS ====================
+# Dictionnaire contenant les traductions de l'interface en Français et Wolof
+# Permet de rendre l'application accessible aux utilisateurs locaux
 LANGS = {
     "Français": {
         "title": "Agent de Collecte - Mékhé",
@@ -152,6 +173,8 @@ LANGS = {
 }
 
 # ==================== INITIALISATION SESSION ====================
+# Initialisation des variables de session Streamlit pour stocker l'état de l'application
+# Ces variables persistent pendant la session utilisateur et permettent de garder les données saisies
 if 'lang' not in st.session_state:
     st.session_state.lang = "Français"
 if 'agent_nom' not in st.session_state:
@@ -182,7 +205,21 @@ if 'collecte1_terminee' not in st.session_state:
     st.session_state.collecte1_terminee = False
 
 # ==================== FONCTIONS UTILES ====================
+# Fonctions utilitaires pour l'export Excel et la recherche d'IDs dans la base de données
 def exporter_excel(session):
+    """
+    Exporte les données de la session actuelle vers un fichier Excel.
+    
+    Crée un fichier Excel avec deux feuilles :
+    - Résumé : informations générales de la tournée
+    - Points et Horaires : détail de chaque point GPS enregistré
+    
+    Args:
+        session: Objet session_state de Streamlit contenant les données
+    
+    Returns:
+        bytes: Contenu du fichier Excel sous forme d'octets
+    """
     output = BytesIO()
     df_points = pd.DataFrame(session.points)
     df_resume = pd.DataFrame([{
@@ -200,6 +237,8 @@ def exporter_excel(session):
     return output.getvalue()
 
 # ==================== FONCTIONS DE RECHERCHE ID ====================
+# Fonctions pour récupérer les IDs des quartiers et équipes depuis la base de données
+# Nécessaires pour l'insertion des données de tournée avec les clés étrangères
 def get_quartier_id(nom):
     """Récupère l'ID d'un quartier à partir de son nom."""
     if not engine: return None
@@ -215,6 +254,8 @@ def get_equipe_id(nom):
         return result[0] if result else None
 
 # ==================== SIDEBAR ====================
+# Configuration de la barre latérale pour la sélection de langue et du mode d'utilisation
+# Permet de basculer entre le mode agent de terrain et le mode dashboard
 with st.sidebar:
     st.session_state.lang = st.selectbox("🌍 Langue / Kàllaama", ["Français", "Wolof"])
     t = LANGS[st.session_state.lang]
@@ -231,7 +272,7 @@ with st.sidebar:
         st.markdown("---")
         st.markdown(f"### {t['info_tournee']}")
         st.session_state.quartier = st.selectbox(t["quartier"], ["HLM", "NDIOP", "LEBOU EST", "NGAYE DIAGNE", "MAMBARA", "NGAYE DJITTE", "LEBOU OUEST"])
-        st.session_state.equipe = st.selectbox(t["equipe"], ["Équipe A", "Équipe B", "Équipe C", "Équipe D"])
+        st.session_state.equipe = st.selectbox(t["equipe"], ["Tracteur1", "Tracteur2", "Sonagedd", "Autre"])
         st.session_state.type_tracteur = st.selectbox(t["tracteur"], ["TAFE", "New Holland", "Massey Ferguson", "John Deere"])
         st.session_state.numero_parc = st.text_input(t["n_parc"], value=st.session_state.numero_parc)
         
@@ -239,6 +280,8 @@ with st.sidebar:
         st.session_state.role = "dashboard"
 
 # ==================== MODE AGENT ====================
+# Interface pour les agents de terrain : saisie des informations de tournée et enregistrement des étapes GPS
+# Affiche les informations de l'agent, permet la saisie des coordonnées GPS pour chaque étape
 if st.session_state.role == "agent":
     
     st.markdown(f"""
@@ -268,6 +311,8 @@ if st.session_state.role == "agent":
     st.markdown("---")
 
     # ==================== ÉTAPES DE COLLECTE ====================
+    # Définition des étapes standard de la tournée de collecte
+    # Chaque étape correspond à un point GPS à enregistrer avec son horaire
     etapes = [
         ("depart", t["step_depart"]),
         ("debut_collecte1", t["step_debut1"]),
@@ -352,6 +397,7 @@ if st.session_state.role == "agent":
         st.download_button(t["export"], excel_data, f"collecte_{date.today()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     
     # ==================== RÉCAPITULATIF ====================
+    # Section pliable affichant un résumé des horaires et points GPS enregistrés
     with st.expander("📋 Voir le récapitulatif"):
         if st.session_state.horaires:
             st.markdown("**Horaires enregistrés :**")
@@ -364,6 +410,8 @@ if st.session_state.role == "agent":
                 st.write(f"- {p['titre']} à {p['heure']} → ({p['lat']:.6f}, {p['lon']:.6f})")
     
     # ==================== CARTE ====================
+    # Affichage d'une carte interactive avec Folium montrant les points GPS enregistrés
+    # Calcule et affiche la distance totale parcourue entre les points
     points_valides = [p for p in st.session_state.points if p.get("lat") and p.get("lon")]
     if len(points_valides) >= 1:
         st.markdown("### 🗺️ Carte des points GPS")
@@ -398,7 +446,8 @@ if st.session_state.role == "agent":
             # Calculer distance
             distance_totale = 0
             for i in range(1, len(coords)):
-                R = 6371
+                # Utilisation de la formule de Haversine pour calculer la distance entre deux points GPS
+                R = 6371  # Rayon de la Terre en km
                 lat1, lon1, lat2, lon2 = map(radians, [coords[i-1][0], coords[i-1][1], coords[i][0], coords[i][1]])
                 dlat = lat2 - lat1
                 dlon = lon2 - lon1
@@ -410,6 +459,8 @@ if st.session_state.role == "agent":
         folium_static(m, width=800, height=400)
     
     # ==================== TERMINER ====================
+    # Bouton de finalisation de la tournée : valide les données, calcule les métriques finales
+    # Enregistre toutes les données dans la base de données et propose de recommencer une nouvelle tournée
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -436,6 +487,8 @@ if st.session_state.role == "agent":
                 # Enregistrement dans la base
                 if engine:
                     try:
+                        # Insertion des données de la tournée dans la table 'tournees'
+                        # Puis insertion de chaque point d'arrêt dans la table 'points_arret'
                         with engine.connect() as conn:
                             q_id = get_quartier_id(st.session_state.quartier)
                             e_id = get_equipe_id(st.session_state.equipe)
@@ -507,6 +560,8 @@ if st.session_state.role == "agent":
                     st.rerun()
 
 # ==================== MODE DASHBOARD ====================
+# Interface d'administration : visualisation des statistiques de collecte, cartes des itinéraires
+# Permet l'analyse des performances par quartier, évolution temporelle, export des données
 else:
     st.markdown("""
     <div class="main-header">
@@ -540,6 +595,7 @@ else:
                 st.info("📭 Aucune collecte enregistrée")
             else:
                 # --- PRÉPARATION DES DONNÉES ET FILTRAGE PAR SEMAINE ---
+                # Conversion des dates et création de labels de semaine pour le filtrage
                 df_tournees['date_dt'] = pd.to_datetime(df_tournees['date_tournee'])
                 df_tournees['semaine_label'] = df_tournees['date_dt'].dt.strftime('%Y - Semaine %V')
                 
@@ -603,6 +659,8 @@ else:
                         m = folium.Map(location=[points_map["lat"].mean(), points_map["lon"].mean()], zoom_start=13)
                         
                         # --- SUPERPOSITION DES CIRCUITS THÉORIQUES (Fichiers GeoJSON) ---
+                        # Chargement et affichage des circuits de collecte théoriques depuis les fichiers GeoJSON
+                        # Permet de comparer les itinéraires réels avec les circuits prévus
                         # On teste les deux variantes de noms de dossier (avec et sans accent)
                         folder_variants = ["itineraire_de_collecte", "itinéraire_de_collecte"]
                         folder_circuits = next((f for f in folder_variants if os.path.exists(f)), None)
@@ -704,6 +762,7 @@ else:
             st.info(f"📭 Base en attente: {e}")
 
 # ==================== CONSIGNES SÉCURITÉ ====================
+# Section informative sur les règles de sécurité à respecter pendant les opérations de collecte
 with st.expander("🛡️ Consignes de sécurité"):
     st.markdown("""
     1. **Gestes et postures** : Pliez les jambes pour soulever
