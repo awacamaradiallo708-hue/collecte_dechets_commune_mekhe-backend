@@ -181,8 +181,22 @@ if 'collecte2_active' not in st.session_state:
 if 'collecte1_terminee' not in st.session_state:
     st.session_state.collecte1_terminee = False
 
-# ==================== FONCTIONS UTILES ====================
+# ==================== FONCTIONS UTILITAIRES ====================
+# Fonctions utilitaires pour l'export Excel et la recherche d'IDs dans la base de données
 def exporter_excel(session):
+    """
+    Exporte les données de la session actuelle vers un fichier Excel.
+    
+    Crée un fichier Excel avec deux feuilles :
+    - Résumé : informations générales de la tournée
+    - Points et Horaires : détail de chaque point GPS enregistré
+    
+    Args:
+        session: Objet session_state de Streamlit contenant les données
+    
+    Returns:
+        bytes: Contenu du fichier Excel sous forme d'octets
+    """
     output = BytesIO()
     df_points = pd.DataFrame(session.points)
     df_resume = pd.DataFrame([{
@@ -198,6 +212,28 @@ def exporter_excel(session):
         df_resume.to_excel(writer, sheet_name="Résumé", index=False)
         df_points.to_excel(writer, sheet_name="Points et Horaires", index=False)
     return output.getvalue()
+
+# ==================== FONCTIONS UTILITAIRES GÉOGRAPHIQUES ====================
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calcule la distance en km entre deux points GPS en utilisant la formule de Haversine.
+    
+    Cette fonction est utilisée pour mesurer les distances réelles sur la surface terrestre,
+    ce qui est plus précis que les distances euclidiennes pour les analyses géographiques.
+    
+    Args:
+        lat1, lon1: Coordonnées du premier point (latitude, longitude)
+        lat2, lon2: Coordonnées du deuxième point (latitude, longitude)
+    
+    Returns:
+        float: Distance en kilomètres entre les deux points
+    """
+    R = 6371  # Rayon moyen de la Terre en km
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    return R * c
 
 # ==================== FONCTIONS DE RECHERCHE ID ====================
 def get_quartier_id(nom):
@@ -566,6 +602,61 @@ else:
                 else:
                     df_dash = df_tournees.copy()
                     df_points_dash = df_points.copy()
+
+                # --- FILTRE PAR COORDONNÉES DE DÉPART ---
+                # Permet de filtrer les tournées qui commencent près d'un point GPS spécifique
+                # Utile pour analyser les itinéraires d'un secteur particulier
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("📍 Filtre par point de départ")
+                coord_depart = st.sidebar.text_input("Coordonnées GPS de départ (lat, lon)", placeholder="15.11, -16.63", help="Entrez les coordonnées pour voir les itinéraires proches")
+                
+                # Fonction pour calculer la distance entre deux points GPS (formule de Haversine)
+                def haversine_distance(lat1, lon1, lat2, lon2):
+                    """
+                    Calcule la distance en km entre deux points GPS en utilisant la formule de Haversine.
+                    
+                    Args:
+                        lat1, lon1: Coordonnées du premier point
+                        lat2, lon2: Coordonnées du deuxième point
+                    
+                    Returns:
+                        Distance en kilomètres
+                    """
+                    R = 6371  # Rayon de la Terre en km
+                    dlat = radians(lat2 - lat1)
+                    dlon = radians(lon2 - lon1)
+                    a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
+                    c = 2 * atan2(sqrt(a), sqrt(1-a))
+                    return R * c
+                
+                # Appliquer le filtre par coordonnées de départ si saisies
+                if coord_depart:
+                    try:
+                        # Parser les coordonnées (format: lat, lon)
+                        match = re.search(r"([-+]?\d+\.\d+)\s*,\s*([-+]?\d+\.\d+)", coord_depart)
+                        if match:
+                            lat_depart, lon_depart = float(match.group(1)), float(match.group(2))
+                            # Filtrer les tournées dont le point de départ est dans un rayon de 500m
+                            tournees_filtrees = []
+                            for tid in df_dash['id'].unique():
+                                points_tournee = df_points_dash[df_points_dash['tournee_id'] == tid]
+                                if not points_tournee.empty:
+                                    # Trouver le premier point (départ)
+                                    premier_point = points_tournee.sort_values('heure').iloc[0]
+                                    distance = haversine_distance(lat_depart, lon_depart, premier_point['lat'], premier_point['lon'])
+                                    if distance <= 0.5:  # 500 mètres
+                                        tournees_filtrees.append(tid)
+                            
+                            if tournees_filtrees:
+                                df_dash = df_dash[df_dash['id'].isin(tournees_filtrees)]
+                                df_points_dash = df_points_dash[df_points_dash['tournee_id'].isin(tournees_filtrees)]
+                                st.info(f"📍 Affichage des tournées proches du point ({lat_depart:.4f}, {lon_depart:.4f}) - {len(tournees_filtrees)} tournée(s) trouvée(s)")
+                            else:
+                                st.warning("⚠️ Aucune tournée trouvée près de ce point")
+                        else:
+                            st.error("❌ Format invalide. Utilisez 'latitude, longitude'")
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors du filtrage: {e}")
 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
