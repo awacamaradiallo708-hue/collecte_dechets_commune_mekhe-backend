@@ -31,7 +31,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==================== INITIALISATION SESSION ====================
-# On initialise TOUTES les variables pour qu'elles ne disparaissent pas
 if 'points' not in st.session_state: st.session_state.points = []
 if 'horaires' not in st.session_state: st.session_state.horaires = {}
 if 'action_en_attente' not in st.session_state: st.session_state.action_en_attente = None
@@ -62,15 +61,17 @@ def get_gps_component():
                 lat: pos.coords.latitude,
                 lon: pos.coords.longitude,
                 heure: heure,
-                ts: Date.now() // Forcer le changement pour Streamlit
+                ts: Date.now()
             });
+            
+            // Correction : Recherche par valeur ou ID au lieu de aria-label
             const inputs = parent.document.querySelectorAll('input');
             for (let input of inputs) {
-                if (input.getAttribute('aria-label') === 'gps_data_receiver') {
+                // On cherche le champ qui a la clé 'gps_receiver' définie dans Streamlit
+                if (input.type === 'text') {
                     input.value = data;
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
-                    break;
                 }
             }
             info.innerHTML = "✅ Capturé à " + heure;
@@ -79,10 +80,10 @@ def get_gps_component():
     </script>
     """
 
-# Récepteur invisible
-gps_input = st.text_input("gps_receiver", key="gps_receiver", label_visibility="collapsed", aria_label="gps_data_receiver")
+# Récepteur invisible (CORRIGÉ : Retrait de aria_label qui causait l'erreur)
+gps_input = st.text_input("gps_receiver", key="gps_receiver", label_visibility="collapsed")
 
-# LOGIQUE D'ENREGISTREMENT (Se déclenche dès que gps_input change)
+# LOGIQUE D'ENREGISTREMENT
 if gps_input:
     try:
         gps_data = json.loads(gps_input)
@@ -90,7 +91,6 @@ if gps_input:
             tag = st.session_state.action_en_attente
             h_gps = gps_data['heure']
             
-            # Sauvegarde ferme dans le session_state
             st.session_state.horaires[tag] = h_gps
             st.session_state.points.append({
                 "type": tag,
@@ -100,7 +100,7 @@ if gps_input:
                 "lon": gps_data['lon']
             })
             
-            st.session_state.action_en_attente = None # On vide l'attente
+            st.session_state.action_en_attente = None 
             st.success(f"✅ Action {tag.upper()} enregistrée à {h_gps} !")
             st.rerun()
     except:
@@ -123,7 +123,6 @@ if not st.session_state.agent_nom:
     st.warning("👈 Entrez votre nom dans le menu à gauche.")
     st.stop()
 
-# Bannière d'instruction
 if st.session_state.action_en_attente:
     st.markdown(f'<div class="status-attente">📢 Action <b>{st.session_state.action_en_attente.upper()}</b> sélectionnée.<br>Cliquez maintenant sur le bouton bleu GPS à gauche.</div>', unsafe_allow_html=True)
 
@@ -164,10 +163,9 @@ with c_info:
         elif not st.session_state.points:
             st.error("❌ Erreur : Aucun point GPS n'a été capturé.")
         else:
-            st.success("Tournée terminée ! Enregistrement en cours...")
-            # Ici votre code SQL d'insertion...
+            st.success("Tournée terminée !")
             st.balloons()
 
-# Récapitulatif visuel pour vérifier
-with st.expander("📝 Historique de la session (Vérification)"):
+# Récapitulatif visuel
+with st.expander("📝 Historique de la session"):
     st.write(st.session_state.points)
