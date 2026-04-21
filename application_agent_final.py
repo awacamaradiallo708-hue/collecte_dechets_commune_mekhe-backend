@@ -579,10 +579,13 @@ else:
                         m = folium.Map(location=[points_map["lat"].mean(), points_map["lon"].mean()], zoom_start=13)
                         
                         # --- SUPERPOSITION DES CIRCUITS THÉORIQUES (Fichiers GeoJSON) ---
-                        folder_circuits = "itineraire_de_collecte"
+                        # On teste les deux variantes de noms de dossier (avec et sans accent)
+                        folder_variants = ["itineraire_de_collecte", "itinéraire_de_collecte"]
+                        folder_circuits = next((f for f in folder_variants if os.path.exists(f)), None)
+                        
                         couleurs_circuits = ["#FF0000", "#2E7D32", "#FF9800", "#9C27B0", "#00BCD4"] # Rouge, Vert, Orange, Violet, Bleu ciel
                         
-                        if os.path.exists(folder_circuits):
+                        if folder_circuits:
                             files = [f for f in os.listdir(folder_circuits) if f.endswith((".geojson", ".json"))]
                             if files:
                                 with st.expander("🔍 Diagnostic des fichiers circuits JSON"):
@@ -598,7 +601,9 @@ else:
                                                 if "features" in geojson_data and geojson_data["features"]:
                                                     geom = geojson_data["features"][0].get("geometry", {})
                                                     coords = geom.get("coordinates", [])
-                                                    sample = coords[0] if geom.get("type") == "LineString" else coords
+                                                    if geom.get("type") == "LineString": sample = coords[0]
+                                                    elif geom.get("type") == "MultiLineString": sample = coords[0][0]
+                                                    else: sample = coords
                                                 
                                                 if sample and isinstance(sample, list):
                                                     lon_s, lat_s = sample[0], sample[1]
@@ -626,7 +631,9 @@ else:
                                         except Exception as e:
                                             st.error(f"💥 Erreur sur {file}: {e}")
                             else:
-                                st.info("ℹ️ Aucun fichier trouvé dans 'itineraire_de_collecte'")
+                                st.info(f"ℹ️ Aucun fichier .geojson trouvé dans '{folder_circuits}'")
+                        else:
+                            st.warning("⚠️ Dossier 'itinéraire_de_collecte' non trouvé à la racine du projet.")
                         
                         # Tracer les lignes pour chaque tournée pour voir l'itinéraire
                         for tid in points_map['tournee_id'].unique():
@@ -648,7 +655,7 @@ else:
                         
                         folium.LayerControl().add_to(m)
                         
-                        # Ajuster la vue pour voir à la fois Louga et Mékhé si nécessaire
+                        # FORCE LA VUE : Englober tous les éléments (Points réels + GeoJSON)
                         m.fit_bounds(m.get_bounds())
                         folium_static(m, width=800, height=400)
 
