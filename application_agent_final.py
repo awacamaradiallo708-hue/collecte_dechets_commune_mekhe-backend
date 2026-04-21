@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
 try:
+    import calendar
     from docx import Document
 except ModuleNotFoundError:
     st.error("⚠️ Le module 'python-docx' est manquant. L'export Word ne fonctionnera pas tant que l'application n'est pas redémarrée sur Streamlit Cloud.")
@@ -202,38 +203,63 @@ def exporter_excel(session):
         df_points.to_excel(writer, sheet_name="Points et Horaires", index=False)
     return output.getvalue()
 
-def generer_rapport_docx(df_tournees, periode="Hebdomadaire"):
-    """Génère un rapport Word de suivi"""
+def generer_rapport_docx(df, periode_nom):
+    """Génère un rapport Word (.docx) professionnel avec tableaux de synthèse"""
     if Document is None:
-        st.error("Impossible de générer le rapport : module 'docx' manquant.")
         return None
-    doc = Document()
-    doc.add_heading(f'Rapport {periode} de Suivi de Collecte - Mékhé', 0)
-    
-    doc.add_heading('1. Résumé de la production', level=1)
-    total_vol = df_tournees['volume_m3'].sum()
-    doc.add_paragraph(f"Volume total collecté : {total_vol:.2f} m³")
-    doc.add_paragraph(f"Nombre de tournées : {len(df_tournees)}")
+        
+    document = Document()
+    document.add_heading(f'Rapport de Collecte des Déchets - Mékhé', 0)
+    document.add_paragraph(f'Période : {periode_nom}')
+    document.add_paragraph(f'Généré le : {datetime.now().strftime("%d/%m/%Y à %H:%M")}')
 
-    doc.add_heading('2. Production par Quartier', level=1)
-    table = doc.add_table(rows=1, cols=2)
+    # Section 1: Synthèse
+    document.add_heading('1. Synthèse de la période', level=1)
+    total_vol = df['volume_m3'].sum()
+    total_t = total_vol * 0.8 # Estimation en tonnes
+    
+    table = document.add_table(rows=1, cols=2)
     hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = 'Quartier'
-    hdr_cells[1].text = 'Volume (m³)'
+    hdr_cells[0].text = 'Indicateur'
+    hdr_cells[1].text = 'Valeur'
     
-    # Groupement par quartier
-    stats_q = df_tournees.groupby('quartier_nom')['volume_m3'].sum().reset_index()
-    for _, row in stats_q.iterrows():
+    metrics = [
+        ('Volume total collecté', f"{total_vol:.2f} m³"),
+        ('Poids total estimé', f"{total_t:.2f} Tonnes"),
+        ('Nombre de tournées', str(len(df))),
+        ('Nombre de quartiers couverts', str(df['quartier_nom'].nunique() if 'quartier_nom' in df.columns else 'N/A'))
+    ]
+    
+    for item, val in metrics:
         row_cells = table.add_row().cells
-        row_cells[0].text = str(row['quartier_nom'])
-        row_cells[1].text = f"{row['volume_m3']:.2f}"
+        row_cells[0].text = item
+        row_cells[1].text = val
 
-    doc.add_heading('3. Analyse des Itinéraires', level=1)
-    doc.add_paragraph("Le suivi GPS permet d'identifier les écarts par rapport au circuit défini. "
-                      "Une analyse des points d'arrêt suggère des optimisations sur les zones à forte densité.")
+    # Section 2: Production par Quartier
+    if 'quartier_nom' in df.columns:
+        document.add_heading('2. Production par Quartier', level=1)
+        q_stats = df.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False)
+        
+        table_q = document.add_table(rows=1, cols=2)
+        hdr_q = table_q.rows[0].cells
+        hdr_q[0].text = 'Quartier'
+        hdr_q[1].text = 'Volume (m³)'
+        
+        for quartier, vol in q_stats.items():
+            row_q = table_q.add_row().cells
+            row_q[0].text = str(quartier)
+            row_q[1].text = f"{vol:.2f}"
 
+    # Section 3: Performance Agents
+    document.add_heading('3. Performance des Agents', level=1)
+    a_stats = df.groupby('agent_nom')['volume_m3'].sum().sort_values(ascending=False)
+    for agent, vol in a_stats.items():
+        document.add_paragraph(f'- {agent} : {vol:.2f} m³ collectés', style='List Bullet')
+
+    document.add_paragraph('\nNote: Les données GPS complètes sont disponibles sur la plateforme interactive.')
+    
     buffer = BytesIO()
-    doc.save(buffer)
+    document.save(buffer)
     return buffer.getvalue()
 
 # ==================== FONCTIONS DE RECHERCHE ID ====================
@@ -619,27 +645,65 @@ else:
                                 color="green" if p['type_point'] == 'depart' else "red",
                                 fill=True
                             ).add_to(m)
-                        folium_static(m, width='stretch', height=400)
+                        folium_static(m, width=800, height=400)
 
                 # --- EXPORTS ---
-                st.markdown("### 📥 Rapports et Analyses")
-                col_exp1, col_exp2 = st.columns(2)
-                with col_exp1:
-                    if st.button("📄 Générer Rapport Hebdomadaire (Word)"):
-                        docx_report = generer_rapport_docx(df_tournees)
-                        st.download_button("📥 Télécharger Rapport Word", docx_report, 
-                                         file_name=f"Rapport_Hebdo_Mekhe_{date.today()}.docx")
+                st.markdown("---")
+                st.subheader("📥 Génération de Rapports (Word)")
+                
+                # Préparation des données pour le filtrage temporel
+                df_tournees['date_dt'] = pd.to_datetime(df_tournees['date_tournee'])
+                df_tournees['semaine'] = df_tournees['date_dt'].dt.isocalendar().week
+                df_tournees['mois'] = df_tournees['date_dt'].dt.month
+                df_tournees['annee'] = df_tournees['date_dt'].dt.year
+
+                col_rep1, col_rep2, col_rep3 = st.columns([1, 1, 2])
+                
+                with col_rep1:
+                    type_r = st.selectbox("Période", ["Hebdomadaire", "Mensuel"])
+                
+                with col_rep2:
+                    if type_r == "Hebdomadaire":
+                        semaines = sorted(df_tournees['semaine'].unique(), reverse=True)
+                        choix_p = st.selectbox("Choisir Semaine", semaines)
+                        df_rapport = df_tournees[df_tournees['semaine'] == choix_p]
+                        nom_p = f"Semaine {choix_p} - {date.today().year}"
+                    else:
+                        mois = sorted(df_tournees['mois'].unique(), reverse=True)
+                        choix_p = st.selectbox("Choisir Mois", mois, format_func=lambda x: calendar.month_name[x])
+                        df_rapport = df_tournees[df_tournees['mois'] == choix_p]
+                        nom_p = f"Mois de {calendar.month_name[choix_p]} {date.today().year}"
+
+                with col_rep3:
+                    st.write(f"📝 {len(df_rapport)} tournées sélectionnées")
+                    if not df_rapport.empty and Document is not None:
+                        docx_data = generer_rapport_docx(df_rapport, nom_p)
+                        st.download_button(
+                            label=f"📥 Télécharger Rapport {type_r}",
+                            data=docx_data,
+                            file_name=f"Rapport_{type_r}_{nom_p.replace(' ', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True
+                        )
+                    elif Document is None:
+                        st.error("Module 'docx' manquant. Rapport indisponible.")
                 
                 st.subheader("📋 Liste des collectes")
-                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], width='stretch')
+                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], use_container_width=True)
                 
-                if st.button("📥 EXPORTER EN EXCEL"):
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_tournees.to_excel(writer, sheet_name="Collectes", index=False)
-                        if not df_points.empty:
-                            df_points.to_excel(writer, sheet_name="Points GPS", index=False)
-                    st.download_button("📥 Télécharger", output.getvalue(), f"dashboard_mekhe_{date.today()}.xlsx")
+                output_excel = BytesIO()
+                with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
+                    df_tournees.to_excel(writer, sheet_name="Collectes", index=False)
+                    if not df_points.empty:
+                        df_points.to_excel(writer, sheet_name="Points GPS", index=False)
+                
+                st.download_button(
+                    label="📥 EXPORTER TOUT EN EXCEL",
+                    data=output_excel.getvalue(),
+                    file_name=f"dashboard_mekhe_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
         except Exception as e:
             st.info(f"📭 Base en attente: {e}")
 

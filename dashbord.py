@@ -921,24 +921,24 @@ with tabs[4]:
         
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
-            if st.button("📄 Générer Rapport WORD", use_container_width=True):
-                docx_data = generer_rapport_docx(df_rapport, periode_nom_rapport)
-                st.download_button(
-                    label="📥 Télécharger (.docx)",
-                    data=docx_data,
-                    file_name=f"Rapport_Collecte_{periode_nom_rapport.replace(' ', '_')}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+            docx_data = generer_rapport_docx(df_rapport, periode_nom_rapport)
+            st.download_button(
+                label="📥 Télécharger Rapport WORD (.docx)",
+                data=docx_data,
+                file_name=f"Rapport_Collecte_{periode_nom_rapport.replace(' ', '_')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True
+            )
         
         with col_dl2:
-            if st.button("🌐 Générer Rapport HTML", use_container_width=True):
-                html_content = generer_rapport_html(df_rapport, periode_nom_rapport)
-                st.download_button(
-                    label="📥 Télécharger (.html)",
-                    data=html_content,
-                    file_name=f"Rapport_Collecte_{periode_nom_rapport.replace(' ', '_')}.html",
-                    mime="text/html"
-                )
+            html_content = generer_rapport_html(df_rapport, periode_nom_rapport)
+            st.download_button(
+                label="📥 Télécharger Rapport HTML (.html)",
+                data=html_content,
+                file_name=f"Rapport_Collecte_{periode_nom_rapport.replace(' ', '_')}.html",
+                mime="text/html",
+                use_container_width=True
+            )
     else:
         st.warning(f"Aucune donnée pour la période sélectionnée ({periode_nom_rapport})")
         st.info("💡 Vous pouvez quand même générer un rapport vide ou sélectionner une autre période.")
