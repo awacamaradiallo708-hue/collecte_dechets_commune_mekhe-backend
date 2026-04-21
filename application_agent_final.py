@@ -10,6 +10,7 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
+from docx import Document
 from io import BytesIO
 import re
 import os
@@ -195,6 +196,37 @@ def exporter_excel(session):
         df_resume.to_excel(writer, sheet_name="Résumé", index=False)
         df_points.to_excel(writer, sheet_name="Points et Horaires", index=False)
     return output.getvalue()
+
+def generer_rapport_docx(df_tournees, periode="Hebdomadaire"):
+    """Génère un rapport Word de suivi"""
+    doc = Document()
+    doc.add_heading(f'Rapport {periode} de Suivi de Collecte - Mékhé', 0)
+    
+    doc.add_heading('1. Résumé de la production', level=1)
+    total_vol = df_tournees['volume_m3'].sum()
+    doc.add_paragraph(f"Volume total collecté : {total_vol:.2f} m³")
+    doc.add_paragraph(f"Nombre de tournées : {len(df_tournees)}")
+
+    doc.add_heading('2. Production par Quartier', level=1)
+    table = doc.add_table(rows=1, cols=2)
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'Quartier'
+    hdr_cells[1].text = 'Volume (m³)'
+    
+    # Groupement par quartier
+    stats_q = df_tournees.groupby('quartier_nom')['volume_m3'].sum().reset_index()
+    for _, row in stats_q.iterrows():
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(row['quartier_nom'])
+        row_cells[1].text = f"{row['volume_m3']:.2f}"
+
+    doc.add_heading('3. Analyse des Itinéraires', level=1)
+    doc.add_paragraph("Le suivi GPS permet d'identifier les écarts par rapport au circuit défini. "
+                      "Une analyse des points d'arrêt suggère des optimisations sur les zones à forte densité.")
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
 
 # ==================== FONCTIONS DE RECHERCHE ID ====================
 def get_quartier_id(nom):
@@ -514,8 +546,24 @@ else:
     
     if engine:
         try:
-            df_tournees = pd.read_sql("SELECT * FROM tournees ORDER BY date_tournee DESC LIMIT 100", engine)
-            df_points = pd.read_sql("SELECT * FROM points_arret WHERE lat IS NOT NULL ORDER BY id DESC LIMIT 500", engine)
+            # Requête améliorée pour avoir les noms des quartiers
+            query_t = """
+                SELECT t.*, q.nom as quartier_nom 
+                FROM tournees t 
+                LEFT JOIN quartiers q ON t.quartier_id = q.id 
+                ORDER BY t.date_tournee DESC LIMIT 100
+            """
+            df_tournees = pd.read_sql(query_t, engine)
+            
+            query_p = """
+                SELECT pa.*, t.agent_nom, q.nom as quartier_nom
+                FROM points_arret pa
+                JOIN tournees t ON pa.tournee_id = t.id
+                JOIN quartiers q ON t.quartier_id = q.id
+                WHERE pa.lat IS NOT NULL
+                ORDER BY pa.tournee_id, pa.heure
+            """
+            df_points = pd.read_sql(query_p, engine)
             
             if df_tournees.empty:
                 st.info("📭 Aucune collecte enregistrée")
@@ -529,16 +577,50 @@ else:
                 with col3:
                     st.metric("📍 Points GPS", len(df_points))
                 with col4:
-                    st.metric("👤 Dernier agent", df_tournees.iloc[0]["agent_nom"] if not df_tournees.empty else "-")
+                    st.metric("🏘️ Quartiers", df_tournees["quartier_nom"].nunique())
+
+                # --- STATISTIQUES PAR QUARTIER ---
+                st.markdown("### 📊 Production de déchets par quartier (m³)")
+                prod_q = df_tournees.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False).reset_index()
+                fig_prod = px.bar(prod_q, x='quartier_nom', y='volume_m3', 
+                                 color='volume_m3', color_continuous_scale='Greens',
+                                 labels={'quartier_nom': 'Quartier', 'volume_m3': 'Volume (m³)'})
+                st.plotly_chart(fig_prod, use_container_width=True)
                 
                 if not df_points.empty:
-                    st.subheader("🗺️ Carte des points GPS")
+                    st.subheader("🗺️ Suivi des Itinéraires de Collecte")
+                    st.caption("Visualisation du respect des circuits définis (Lignes = parcours réel)")
                     points_map = df_points.dropna(subset=["lat", "lon"])
                     if not points_map.empty:
                         m = folium.Map(location=[points_map["lat"].mean(), points_map["lon"].mean()], zoom_start=13)
+                        
+                        # Tracer les lignes pour chaque tournée pour voir l'itinéraire
+                        for tid in points_map['tournee_id'].unique():
+                            df_tid = points_map[points_map['tournee_id'] == tid].sort_values('heure')
+                            locations = df_tid[['lat', 'lon']].values.tolist()
+                            
+                            # Couleur aléatoire par tournée pour distinguer
+                            folium.PolyLine(locations, color="blue", weight=2.5, opacity=0.8, 
+                                          tooltip=f"Tournée #{tid}").add_to(m)
+                            
                         for _, p in points_map.iterrows():
-                            folium.Marker([p["lat"], p["lon"]], popup=p["type_point"], icon=folium.Icon(color="blue")).add_to(m)
+                            folium.CircleMarker(
+                                location=[p["lat"], p["lon"]],
+                                radius=5,
+                                popup=f"<b>{p['type_point']}</b><br>Agent: {p['agent_nom']}<br>Heure: {p['heure']}",
+                                color="green" if p['type_point'] == 'depart' else "red",
+                                fill=True
+                            ).add_to(m)
                         folium_static(m, width=800, height=400)
+
+                # --- EXPORTS ---
+                st.markdown("### 📥 Rapports et Analyses")
+                col_exp1, col_exp2 = st.columns(2)
+                with col_exp1:
+                    if st.button("📄 Générer Rapport Hebdomadaire (Word)"):
+                        docx_report = generer_rapport_docx(df_tournees)
+                        st.download_button("📥 Télécharger Rapport Word", docx_report, 
+                                         file_name=f"Rapport_Hebdo_Mekhe_{date.today()}.docx")
                 
                 st.subheader("📋 Liste des collectes")
                 st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], use_container_width=True)
