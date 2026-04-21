@@ -10,12 +10,7 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
-try:
-    import calendar
-    from docx import Document
-except ModuleNotFoundError:
-    st.error("⚠️ Le module 'python-docx' est manquant. L'export Word ne fonctionnera pas tant que l'application n'est pas redémarrée sur Streamlit Cloud.")
-    Document = None
+import calendar # Keep calendar for date calculations
 
 from io import BytesIO
 import re
@@ -202,65 +197,6 @@ def exporter_excel(session):
         df_resume.to_excel(writer, sheet_name="Résumé", index=False)
         df_points.to_excel(writer, sheet_name="Points et Horaires", index=False)
     return output.getvalue()
-
-def generer_rapport_docx(df, periode_nom):
-    """Génère un rapport Word (.docx) professionnel avec tableaux de synthèse"""
-    if Document is None:
-        return None
-        
-    document = Document()
-    document.add_heading(f'Rapport de Collecte des Déchets - Mékhé', 0)
-    document.add_paragraph(f'Période : {periode_nom}')
-    document.add_paragraph(f'Généré le : {datetime.now().strftime("%d/%m/%Y à %H:%M")}')
-
-    # Section 1: Synthèse
-    document.add_heading('1. Synthèse de la période', level=1)
-    total_vol = df['volume_m3'].sum()
-    total_t = total_vol * 0.8 # Estimation en tonnes
-    
-    table = document.add_table(rows=1, cols=2)
-    hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = 'Indicateur'
-    hdr_cells[1].text = 'Valeur'
-    
-    metrics = [
-        ('Volume total collecté', f"{total_vol:.2f} m³"),
-        ('Poids total estimé', f"{total_t:.2f} Tonnes"),
-        ('Nombre de tournées', str(len(df))),
-        ('Nombre de quartiers couverts', str(df['quartier_nom'].nunique() if 'quartier_nom' in df.columns else 'N/A'))
-    ]
-    
-    for item, val in metrics:
-        row_cells = table.add_row().cells
-        row_cells[0].text = item
-        row_cells[1].text = val
-
-    # Section 2: Production par Quartier
-    if 'quartier_nom' in df.columns:
-        document.add_heading('2. Production par Quartier', level=1)
-        q_stats = df.groupby('quartier_nom')['volume_m3'].sum().sort_values(ascending=False)
-        
-        table_q = document.add_table(rows=1, cols=2)
-        hdr_q = table_q.rows[0].cells
-        hdr_q[0].text = 'Quartier'
-        hdr_q[1].text = 'Volume (m³)'
-        
-        for quartier, vol in q_stats.items():
-            row_q = table_q.add_row().cells
-            row_q[0].text = str(quartier)
-            row_q[1].text = f"{vol:.2f}"
-
-    # Section 3: Performance Agents
-    document.add_heading('3. Performance des Agents', level=1)
-    a_stats = df.groupby('agent_nom')['volume_m3'].sum().sort_values(ascending=False)
-    for agent, vol in a_stats.items():
-        document.add_paragraph(f'- {agent} : {vol:.2f} m³ collectés', style='List Bullet')
-
-    document.add_paragraph('\nNote: Les données GPS complètes sont disponibles sur la plateforme interactive.')
-    
-    buffer = BytesIO()
-    document.save(buffer)
-    return buffer.getvalue()
 
 # ==================== FONCTIONS DE RECHERCHE ID ====================
 def get_quartier_id(nom):

@@ -8,4 +8,4 @@ openpyxl
 folium
 streamlit-folium
 openai
-streamlit-geolocation
+streamlit-geolocation # Keep if still used for GPS, otherwise remove
