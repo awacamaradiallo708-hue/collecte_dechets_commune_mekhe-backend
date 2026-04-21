@@ -115,8 +115,8 @@ def load_all_data():
                 pa.tournee_id,
                 pa.heure,
                 pa.type_point,
-                pa.latitude,
-                pa.longitude,
+                pa.lat,
+                pa.lon,
                 pa.collecte_numero,
                 pa.description,
                 q.nom as quartier,
@@ -126,7 +126,7 @@ def load_all_data():
             JOIN tournees t ON pa.tournee_id = t.id
             JOIN quartiers q ON t.quartier_id = q.id
             JOIN equipes e ON t.equipe_id = e.id
-            WHERE pa.latitude IS NOT NULL
+            WHERE pa.lat IS NOT NULL
             ORDER BY t.date_tournee DESC, pa.heure
         """)
         df_points = pd.read_sql(query_points, conn)
@@ -666,12 +666,12 @@ with tabs[2]:
             
             fig = px.scatter_mapbox(
                 df_carte, 
-                lat="latitude", 
-                lon="longitude",
+                lat="lat", 
+                lon="lon",
                 color="equipe",
                 size="taille_point",
                 hover_name="nom_affichage",
-                hover_data={"quartier": True, "collecte_numero": True, "heure": True, "type_point": True},
+                hover_data={"quartier": True, "collecte_numero": True, "heure": True, "type_point": True, "lat": False, "lon": False},
                 color_discrete_map=color_map,
                 zoom=12, 
                 center={"lat": 15.11, "lon": -16.65},
@@ -685,8 +685,8 @@ with tabs[2]:
                     equipe_tour = df_tour.iloc[0]['equipe']
                     couleur_ligne = color_map.get(equipe_tour, 'blue')
                     fig.add_trace(go.Scattermapbox(
-                        lat=df_tour['latitude'].tolist(),
-                        lon=df_tour['longitude'].tolist(),
+                        lat=df_tour['lat'].tolist(),
+                        lon=df_tour['lon'].tolist(),
                         mode='lines',
                         line=dict(width=2, color=couleur_ligne),
                         name=f'Trajet {equipe_tour} (tournée {tid})',
@@ -704,7 +704,7 @@ with tabs[2]:
                     for i in range(1, len(df_tour)):
                         p1 = df_tour.iloc[i-1]
                         p2 = df_tour.iloc[i]
-                        d = haversine(p1['latitude'], p1['longitude'], p2['latitude'], p2['longitude'])
+                        d = haversine(p1['lat'], p1['lon'], p2['lat'], p2['lon'])
                         distances.append({
                             "Tournée": tid,
                             "Équipe": p1['equipe'],

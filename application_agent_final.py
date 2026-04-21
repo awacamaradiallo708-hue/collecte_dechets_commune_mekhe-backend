@@ -100,6 +100,10 @@ LANGS = {
         "step_debut1": "🗑️ DÉBUT COLLECTE 1",
         "step_fin1": "🏁 FIN COLLECTE 1",
         "step_vidage1": "🚛 VIDAGE DÉCHARGE 1",
+        "step_debut2": "🗑️ DÉBUT COLLECTE 2",
+        "step_fin2": "🏁 FIN COLLECTE 2",
+        "step_vidage2": "🚛 VIDAGE DÉCHARGE 2",
+        "add_collecte2": "➕ AJOUTER UNE 2ÈME COLLECTE",
         "step_retour": "🏁 RETOUR AU DÉPÔT",
         "save": "Enregistrer cette étape",
         "success_save": "Étape enregistrée à",
@@ -125,6 +129,10 @@ LANGS = {
         "step_debut1": "🗑️ TAMBALI WECCI 1",
         "step_fin1": "🏁 JEEXAL WECCI 1",
         "step_vidage1": "🚛 SOTTI 1",
+        "step_debut2": "🗑️ TAMBALI WECCI 2",
+        "step_fin2": "🏁 JEEXAL WECCI 2",
+        "step_vidage2": "🚛 SOTTI 2",
+        "add_collecte2": "➕ YOKKU WECCI 2",
         "step_retour": "🏁 ÑIBI",
         "save": "Bind li am",
         "success_save": "Bind nañ ko ci",
@@ -213,10 +221,10 @@ with st.sidebar:
 # ==================== MODE AGENT ====================
 if st.session_state.role == "agent":
     
-    st.markdown("""
+    st.markdown(f"""
     <div class="main-header">
-        <h1>🗑️ {t['title']}</h1>
-        <p>{t['gps_help']}</p>
+        <h1>🗑️ {t.get('title')}</h1>
+        <p>{t.get('gps_help')}</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -245,8 +253,22 @@ if st.session_state.role == "agent":
         ("debut_collecte1", t["step_debut1"]),
         ("fin_collecte1", t["step_fin1"]),
         ("decharge1", t["step_vidage1"]),
-        ("retour", t["step_retour"])
     ]
+
+    # Ajout de la collecte 2 si activée
+    if st.session_state.collecte1_terminee and not st.session_state.collecte2_active:
+        if st.button(t["add_collecte2"], use_container_width=True):
+            st.session_state.collecte2_active = True
+            st.rerun()
+
+    if st.session_state.collecte2_active:
+        etapes.extend([
+            ("debut_collecte2", t["step_debut2"]),
+            ("fin_collecte2", t["step_fin2"]),
+            ("decharge2", t["step_vidage2"])
+        ])
+
+    etapes.append(("retour", t["step_retour"]))
 
     for code, nom_etape in etapes:
         with st.expander(nom_etape, expanded=(code not in st.session_state.horaires)):
@@ -257,9 +279,12 @@ if st.session_state.role == "agent":
             else:
                 coords = st.text_input(f"📍 Coordonnées GPS ({nom_etape})", key=f"in_{code}", placeholder="15.11, -16.63")
                 
-                if code == "decharge1":
+                if code in ["decharge1", "decharge2"]:
+                    v_key = "vol1" if code == "decharge1" else "vol2"
+                    v_state = "collecte1" if code == "decharge1" else "collecte2"
                     v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, 0.0, 0.5, key="vol1")
-                    st.session_state.volumes["collecte1"] = v1
+                    v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, 0.0, 0.5, key=v_key)
+                    st.session_state.volumes[v_state] = v1
 
                 if st.button(t["save"], key=f"btn_{code}"):
                     if coords:
@@ -357,20 +382,34 @@ if st.session_state.role == "agent":
                 st.error("❌ Veuillez entrer le volume de la collecte 1")
             else:
                 st.balloons()
+                
+                # Calcul distance totale
+                dist_total = 0
+                pts = st.session_state.points
+                if len(pts) > 1:
+                    for i in range(1, len(pts)):
+                        lat1, lon1, lat2, lon2 = map(radians, [pts[i-1]["lat"], pts[i-1]["lon"], pts[i]["lat"], pts[i]["lon"]])
+                        dlat = lat2 - lat1
+                        dlon = lon2 - lon1
+                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                        c = 2 * atan2(sqrt(a), sqrt(1-a))
+                        dist_total += 6371 * c
+
                 # Enregistrement dans la base
                 if engine:
                     try:
                         with engine.connect() as conn:
+                            vol_total = st.session_state.volumes["collecte1"] + st.session_state.volumes["collecte2"]
                             result = conn.execute(text("""
                                 INSERT INTO tournees (
                                     date_tournee, agent_nom,
-                                    volume_collecte1, volume_collecte2,
+                                    volume_collecte1, volume_collecte2, volume_m3, distance_parcourue_km,
                                     heure_depot_depart, heure_retour_depot,
                                     heure_debut_collecte1, heure_fin_collecte1,
                                     heure_arrivee_decharge1, statut
                                 ) VALUES (
-                                    :date, :agent,
-                                    :vol1, :vol2,
+                                    :date, :agent, 
+                                    :vol1, :vol2, :vol_t, :dist,
                                     :depart, :retour, :debut1, :fin1, :decharge1, 'termine'
                                 ) RETURNING id
                             """), {
@@ -378,6 +417,8 @@ if st.session_state.role == "agent":
                                 "agent": st.session_state.agent_nom,
                                 "vol1": st.session_state.volumes["collecte1"],
                                 "vol2": st.session_state.volumes["collecte2"],
+                                "vol_t": vol_total,
+                                "dist": dist_total,
                                 "depart": st.session_state.horaires.get("depart"),
                                 "retour": st.session_state.horaires.get("retour"),
                                 "debut1": st.session_state.horaires.get("debut_collecte1"),
@@ -388,8 +429,8 @@ if st.session_state.role == "agent":
                             
                             for point in st.session_state.points:
                                 conn.execute(text("""
-                                    INSERT INTO points_arret (tournee_id, type_point, latitude, longitude, heure)
-                                    VALUES (:tid, :type, :lat, :lon, :heure)
+                                    INSERT INTO points_arret (tournee_id, type_point, lat, lon, heure)
+                                    VALUES (:tid, :type, :p_lat, :p_lon, :heure)
                                 """), {
                                     "tid": tournee_id,
                                     "type": point["type"],
@@ -424,7 +465,7 @@ else:
     if engine:
         try:
             df_tournees = pd.read_sql("SELECT * FROM tournees ORDER BY date_tournee DESC LIMIT 100", engine)
-            df_points = pd.read_sql("SELECT * FROM points_arret WHERE latitude IS NOT NULL ORDER BY id DESC LIMIT 500", engine)
+            df_points = pd.read_sql("SELECT * FROM points_arret WHERE lat IS NOT NULL ORDER BY id DESC LIMIT 500", engine)
             
             if df_tournees.empty:
                 st.info("📭 Aucune collecte enregistrée")
@@ -442,11 +483,11 @@ else:
                 
                 if not df_points.empty:
                     st.subheader("🗺️ Carte des points GPS")
-                    points_map = df_points.dropna(subset=["latitude", "longitude"])
+                    points_map = df_points.dropna(subset=["lat", "lon"])
                     if not points_map.empty:
-                        m = folium.Map(location=[points_map["latitude"].mean(), points_map["longitude"].mean()], zoom_start=13)
+                        m = folium.Map(location=[points_map["lat"].mean(), points_map["lon"].mean()], zoom_start=13)
                         for _, p in points_map.iterrows():
-                            folium.Marker([p["latitude"], p["longitude"]], popup=p["type_point"], icon=folium.Icon(color="blue")).add_to(m)
+                            folium.Marker([p["lat"], p["lon"]], popup=p["type_point"], icon=folium.Icon(color="blue")).add_to(m)
                         folium_static(m, width=800, height=400)
                 
                 st.subheader("📋 Liste des collectes")
