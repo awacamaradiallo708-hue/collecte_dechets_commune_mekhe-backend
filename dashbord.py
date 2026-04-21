@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import create_engine, text
 import os
 from io import BytesIO
+from docx import Document
 import calendar
 from math import radians, sin, cos, sqrt, atan2
 
@@ -297,6 +298,67 @@ def generer_rapport_html(df, periode_nom):
     </html>
     """
     return html
+
+def generer_rapport_docx(df, periode_nom):
+    """Génère un rapport Word (.docx) complet pour la période sélectionnée"""
+    document = Document()
+    document.add_heading(f'Rapport de Collecte des Déchets - Mékhé', 0)
+    document.add_paragraph(f'Période : {periode_nom}')
+    document.add_paragraph(f'Généré le : {datetime.now().strftime("%d/%m/%Y à %H:%M")}')
+
+    # Section Synthèse
+    document.add_heading('1. Synthèse de la période', level=1)
+    total_vol = df['volume_m3'].sum()
+    total_t = total_vol * 0.8
+    
+    table = document.add_table(rows=1, cols=2)
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'Indicateur'
+    hdr_cells[1].text = 'Valeur'
+    
+    metrics = [
+        ('Volume total collecté', f"{total_vol:.2f} m³"),
+        ('Poids total estimé', f"{total_t:.2f} Tonnes"),
+        ('Nombre de tournées', str(len(df))),
+        ('Distance parcourue', f"{df['distance'].sum():.2f} km"),
+        ('Nombre de quartiers couverts', str(df['quartier'].nunique()))
+    ]
+    
+    for item, val in metrics:
+        row_cells = table.add_row().cells
+        row_cells[0].text = item
+        row_cells[1].text = val
+
+    # Section Production par Quartier
+    document.add_heading('2. Production par Quartier', level=1)
+    q_stats = df.groupby('quartier').agg({
+        'volume_m3': 'sum',
+        'id': 'count'
+    }).sort_values('volume_m3', ascending=False)
+    
+    table_q = document.add_table(rows=1, cols=3)
+    hdr_q = table_q.rows[0].cells
+    hdr_q[0].text = 'Quartier'
+    hdr_q[1].text = 'Volume (m³)'
+    hdr_q[2].text = 'Nbre Tournées'
+    
+    for quartier, row in q_stats.iterrows():
+        row_q = table_q.add_row().cells
+        row_q[0].text = str(quartier)
+        row_q[1].text = f"{row['volume_m3']:.2f}"
+        row_q[2].text = str(int(row['id']))
+
+    # Section Performance Agents
+    document.add_heading('3. Performance des Agents', level=1)
+    a_stats = df.groupby('agent')['volume_m3'].sum().sort_values(ascending=False)
+    for agent, vol in a_stats.items():
+        document.add_paragraph(f'- {agent} : {vol:.2f} m³ collectés', style='List Bullet')
+
+    document.add_paragraph('\nNote: Les tonnes sont calculées sur une base de densité moyenne de 0.8.')
+    
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 # ==================== PAGE ADMINISTRATION ====================
 def show_admin_panel():
@@ -589,9 +651,21 @@ with tabs[0]:
             st.info(f"📊 **Efficacité globale :** {total_distance/total_volume:.2f} km/m³")
         
         st.markdown("---")
-        evol_journaliere = df_filtered.groupby('date')['volume_m3'].sum().reset_index()
-        fig_evol = px.line(evol_journaliere, x='date', y='volume_m3', title="Volume collecté par jour (m³)", markers=True)
-        st.plotly_chart(fig_evol, use_container_width=True)
+        col_charts1, col_charts2 = st.columns(2)
+        
+        with col_charts1:
+            evol_journaliere = df_filtered.groupby('date')['volume_m3'].sum().reset_index()
+            fig_evol = px.line(evol_journaliere, x='date', y='volume_m3', title="Production journalière (m³)", markers=True, color_discrete_sequence=['#2E7D32'])
+            st.plotly_chart(fig_evol, use_container_width=True)
+            
+        with col_charts2:
+            prod_quartier = df_filtered.groupby('quartier')['volume_m3'].sum().sort_values(ascending=False).reset_index()
+            fig_prod = px.bar(prod_quartier, x='quartier', y='volume_m3', 
+                             title="Production totale par quartier (m³)",
+                             color='volume_m3', color_continuous_scale='Greens')
+            st.plotly_chart(fig_prod, use_container_width=True)
+
+        st.markdown("---")
         
         evol_quartier = df_filtered.groupby(['date', 'quartier'])['volume_m3'].sum().reset_index()
         fig_quartier = px.line(evol_quartier, x='date', y='volume_m3', color='quartier', title="Évolution par quartier (m³)", markers=True)
@@ -845,15 +919,26 @@ with tabs[4]:
         with col3:
             st.metric("🚛 Nombre de tournées", len(df_rapport))
         
-        if st.button("📥 Générer le rapport HTML", use_container_width=True):
-            html_content = generer_rapport_html(df_rapport, periode_nom_rapport)
-            st.download_button(
-                label="📄 Télécharger le rapport (HTML)",
-                data=html_content,
-                file_name=f"rapport_collectes_{periode_nom_rapport.replace(' ', '_')}.html",
-                mime="text/html"
-            )
-            st.success("Rapport généré ! Ouvrez-le dans votre navigateur, puis utilisez Ctrl+P pour l'enregistrer en PDF.")
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            if st.button("📄 Générer Rapport WORD", use_container_width=True):
+                docx_data = generer_rapport_docx(df_rapport, periode_nom_rapport)
+                st.download_button(
+                    label="📥 Télécharger (.docx)",
+                    data=docx_data,
+                    file_name=f"Rapport_Collecte_{periode_nom_rapport.replace(' ', '_')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+        
+        with col_dl2:
+            if st.button("🌐 Générer Rapport HTML", use_container_width=True):
+                html_content = generer_rapport_html(df_rapport, periode_nom_rapport)
+                st.download_button(
+                    label="📥 Télécharger (.html)",
+                    data=html_content,
+                    file_name=f"Rapport_Collecte_{periode_nom_rapport.replace(' ', '_')}.html",
+                    mime="text/html"
+                )
     else:
         st.warning(f"Aucune donnée pour la période sélectionnée ({periode_nom_rapport})")
         st.info("💡 Vous pouvez quand même générer un rapport vide ou sélectionner une autre période.")
