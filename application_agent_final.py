@@ -10,7 +10,12 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
-from docx import Document
+try:
+    from docx import Document
+except ModuleNotFoundError:
+    st.error("⚠️ Le module 'python-docx' est manquant. L'export Word ne fonctionnera pas tant que l'application n'est pas redémarrée sur Streamlit Cloud.")
+    Document = None
+
 from io import BytesIO
 import re
 import os
@@ -199,6 +204,9 @@ def exporter_excel(session):
 
 def generer_rapport_docx(df_tournees, periode="Hebdomadaire"):
     """Génère un rapport Word de suivi"""
+    if Document is None:
+        st.error("Impossible de générer le rapport : module 'docx' manquant.")
+        return None
     doc = Document()
     doc.add_heading(f'Rapport {periode} de Suivi de Collecte - Mékhé', 0)
     
@@ -611,7 +619,7 @@ else:
                                 color="green" if p['type_point'] == 'depart' else "red",
                                 fill=True
                             ).add_to(m)
-                        folium_static(m, width=800, height=400)
+                        folium_static(m, width='stretch', height=400)
 
                 # --- EXPORTS ---
                 st.markdown("### 📥 Rapports et Analyses")
@@ -623,7 +631,7 @@ else:
                                          file_name=f"Rapport_Hebdo_Mekhe_{date.today()}.docx")
                 
                 st.subheader("📋 Liste des collectes")
-                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], use_container_width=True)
+                st.dataframe(df_tournees[["date_tournee", "agent_nom", "volume_collecte1", "volume_collecte2"]], width='stretch')
                 
                 if st.button("📥 EXPORTER EN EXCEL"):
                     output = BytesIO()
