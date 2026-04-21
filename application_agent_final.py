@@ -11,10 +11,13 @@ from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
 from io import BytesIO
+import re
+import os
 from math import radians, sin, cos, sqrt, atan2
 
 # ==================== CONNEXION BASE NEON.TECH ====================
-DATABASE_URL = "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require"
+# Note: Il est recommandé de stocker ceci dans des variables d'environnement
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_43LqPNrhlzWo@ep-misty-mode-al5c7s4f-pooler.c-3.eu-central-1.aws.neon.tech/neondb?sslmode=require")
 
 @st.cache_resource
 def init_connection():
@@ -72,10 +75,72 @@ st.markdown("""
         font-size: 16px;
         font-weight: bold;
     }
+    .lang-box {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+    }
     </style>
 """, unsafe_allow_html=True)
 
+# ==================== TRADUCTIONS ====================
+LANGS = {
+    "Français": {
+        "title": "Agent de Collecte - Mékhé",
+        "info_tournee": "📍 Informations tournée",
+        "nom": "✍️ Votre nom",
+        "quartier": "Quartier",
+        "equipe": "Équipe",
+        "tracteur": "Type tracteur",
+        "n_parc": "N° Parc",
+        "gps_help": "Ouvrez Google Maps, copiez votre position (appui long sur le point bleu) et collez-la ci-dessous.",
+        "open_maps": "📍 Ouvrir Google Maps",
+        "step_depart": "🏭 DÉPART DU DÉPÔT",
+        "step_debut1": "🗑️ DÉBUT COLLECTE 1",
+        "step_fin1": "🏁 FIN COLLECTE 1",
+        "step_vidage1": "🚛 VIDAGE DÉCHARGE 1",
+        "step_retour": "🏁 RETOUR AU DÉPÔT",
+        "save": "Enregistrer cette étape",
+        "success_save": "Étape enregistrée à",
+        "vol": "Volume (m³)",
+        "incident": "⚠️ Incident / Problème rencontré",
+        "incidents_list": ["Aucun", "Retard", "Panne", "Problème technique", "Route barrée", "Autre"],
+        "finish": "✅ TERMINER ET ENREGISTRER",
+        "export": "📥 EXPORTER EN EXCEL",
+        "new_tournee": "🔄 NOUVELLE TOURNÉE",
+        "error_gps": "Format invalide. Utilisez 'latitude, longitude' (ex: 15.11, -16.63)"
+    },
+    "Wolof": {
+        "title": "Liggeeykatu Mbalit - Meexee",
+        "info_tournee": "📍 Xibaari liggeey bi",
+        "nom": "✍️ Sa tur",
+        "quartier": "Gox bi",
+        "equipe": "Àndandoo bi",
+        "tracteur": "Traktoer bi",
+        "n_parc": "N° Parc",
+        "gps_help": "Ubbi Google Maps, koppi sa bërëb, sotti ko fii.",
+        "open_maps": "📍 Ubbi Google Maps",
+        "step_depart": "🏭 GÀDDAAY",
+        "step_debut1": "🗑️ TAMBALI WECCI 1",
+        "step_fin1": "🏁 JEEXAL WECCI 1",
+        "step_vidage1": "🚛 SOTTI 1",
+        "step_retour": "🏁 ÑIBI",
+        "save": "Bind li am",
+        "success_save": "Bind nañ ko ci",
+        "vol": "Mbalit wi (m³)",
+        "incident": "⚠️ Jafe-jafe bu am",
+        "incidents_list": ["Amul", "Xar", "Yàqu", "Jafe-jafe teknik", "Yoon bu tëju", "Leneen"],
+        "finish": "✅ JEEXAL LIGGEEY BI",
+        "export": "📥 WÀCCI FATU EXCEL BI",
+        "new_tournee": "🔄 TAMBALI LENEEN",
+        "error_gps": "Mbind mi baaxul. Sotti ko ni: 'latitude, longitude'"
+    }
+}
+
 # ==================== INITIALISATION SESSION ====================
+if 'lang' not in st.session_state:
+    st.session_state.lang = "Français"
 if 'agent_nom' not in st.session_state:
     st.session_state.agent_nom = ""
 if 'role' not in st.session_state:
@@ -88,6 +153,8 @@ if 'type_tracteur' not in st.session_state:
     st.session_state.type_tracteur = "TAFE"
 if 'numero_parc' not in st.session_state:
     st.session_state.numero_parc = ""
+if 'incident' not in st.session_state:
+    st.session_state.incident = "Aucun"
 
 # Points et horaires
 if 'points' not in st.session_state:
@@ -101,382 +168,125 @@ if 'collecte2_active' not in st.session_state:
 if 'collecte1_terminee' not in st.session_state:
     st.session_state.collecte1_terminee = False
 
-# Position GPS
-if 'latitude' not in st.session_state:
-    st.session_state.latitude = None
-if 'longitude' not in st.session_state:
-    st.session_state.longitude = None
-if 'gps_obtenu' not in st.session_state:
-    st.session_state.gps_obtenu = False
-if 'action_en_attente' not in st.session_state:
-    st.session_state.action_en_attente = None
-
-# ==================== COMPOSANT HTML POUR GPS ====================
-# Champ caché pour recevoir les données GPS
-gps_receiver = st.text_input("", key="gps_receiver", label_visibility="collapsed")
-
-if gps_receiver:
-    try:
-        data = json.loads(gps_receiver)
-        st.session_state.latitude = data.get("lat")
-        st.session_state.longitude = data.get("lon")
-        st.session_state.gps_obtenu = True
-        
-        # Si une action était en attente, l'exécuter
-        if st.session_state.action_en_attente:
-            action = st.session_state.action_en_attente
-            current_time = datetime.now().strftime("%H:%M:%S")
-            
-            if action == "depart":
-                st.session_state.horaires["depart"] = current_time
-                st.session_state.points.append({
-                    "type": "depart", "titre": "🏭 Départ du dépôt",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ DÉPART enregistré à {current_time}")
-                st.balloons()
-                
-            elif action == "debut_collecte1":
-                st.session_state.horaires["debut_collecte1"] = current_time
-                st.session_state.points.append({
-                    "type": "debut_collecte1", "titre": "🗑️ Début collecte 1",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ DÉBUT COLLECTE 1 à {current_time}")
-                
-            elif action == "fin_collecte1":
-                st.session_state.horaires["fin_collecte1"] = current_time
-                st.session_state.collecte1_terminee = True
-                st.session_state.points.append({
-                    "type": "fin_collecte1", "titre": "🏁 Fin collecte 1",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ FIN COLLECTE 1 à {current_time}")
-                
-            elif action == "decharge1":
-                st.session_state.horaires["decharge1"] = current_time
-                st.session_state.points.append({
-                    "type": "decharge1", "titre": "🚛 Vidage décharge 1",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ VIDAGE DÉCHARGE 1 à {current_time}")
-                
-            elif action == "debut_collecte2":
-                st.session_state.horaires["debut_collecte2"] = current_time
-                st.session_state.points.append({
-                    "type": "debut_collecte2", "titre": "🗑️ Début collecte 2",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ DÉBUT COLLECTE 2 à {current_time}")
-                
-            elif action == "fin_collecte2":
-                st.session_state.horaires["fin_collecte2"] = current_time
-                st.session_state.points.append({
-                    "type": "fin_collecte2", "titre": "🏁 Fin collecte 2",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ FIN COLLECTE 2 à {current_time}")
-                
-            elif action == "decharge2":
-                st.session_state.horaires["decharge2"] = current_time
-                st.session_state.points.append({
-                    "type": "decharge2", "titre": "🚛 Second vidage",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ SECOND VIDAGE à {current_time}")
-                
-            elif action == "retour":
-                st.session_state.horaires["retour"] = current_time
-                st.session_state.points.append({
-                    "type": "retour", "titre": "🏁 Retour au dépôt",
-                    "heure": current_time,
-                    "lat": st.session_state.latitude,
-                    "lon": st.session_state.longitude
-                })
-                st.success(f"✅ RETOUR enregistré à {current_time}")
-            
-            st.session_state.action_en_attente = None
-            st.rerun()
-    except:
-        pass
-
-def get_gps_component():
-    """Composant HTML/JavaScript pour obtenir la position GPS"""
-    return """
-    <div id="gps_status" style="background-color: #f0f0f0; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 10px;">
-        ⚠️ Cliquez sur le bouton pour obtenir votre position
-    </div>
-    <button onclick="getGPSPosition()" style="background-color: #2196F3; color: white; padding: 10px; border: none; border-radius: 8px; width: 100%; cursor: pointer; font-size: 16px; font-weight: bold;">
-        📍 Obtenir ma position GPS
-    </button>
-    
-    <input type="text" id="gps_data_input" style="display: none;" />
-    
-    <script>
-    function getGPSPosition() {
-        var statusDiv = document.getElementById('gps_status');
-        statusDiv.innerHTML = '📍 Recherche GPS en cours...';
-        statusDiv.style.backgroundColor = '#fff3e0';
-        
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    var lat = position.coords.latitude;
-                    var lon = position.coords.longitude;
-                    
-                    statusDiv.innerHTML = '✅ Position trouvée ! Latitude: ' + lat.toFixed(6) + ', Longitude: ' + lon.toFixed(6);
-                    statusDiv.style.backgroundColor = '#e8f5e9';
-                    
-                    var data = JSON.stringify({lat: lat, lon: lon});
-                    
-                    // Mettre à jour le champ caché
-                    var input = document.getElementById('gps_data_input');
-                    input.value = data;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    
-                    // Chercher le champ Streamlit
-                    var streamlitInputs = parent.document.querySelectorAll('input');
-                    for (var i = 0; i < streamlitInputs.length; i++) {
-                        if (streamlitInputs[i].id && streamlitInputs[i].id.includes('gps_receiver')) {
-                            streamlitInputs[i].value = data;
-                            streamlitInputs[i].dispatchEvent(new Event('input', { bubbles: true }));
-                            break;
-                        }
-                    }
-                },
-                function(error) {
-                    var errorMsg = '';
-                    switch(error.code) {
-                        case error.PERMISSION_DENIED:
-                            errorMsg = 'Permission refusée. Activez la localisation.';
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            errorMsg = 'Position non disponible.';
-                            break;
-                        case error.TIMEOUT:
-                            errorMsg = 'Délai dépassé. Réessayez.';
-                            break;
-                        default:
-                            errorMsg = 'Erreur GPS inconnue';
-                    }
-                    statusDiv.innerHTML = '❌ ' + errorMsg;
-                    statusDiv.style.backgroundColor = '#ffebee';
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
-        } else {
-            statusDiv.innerHTML = '❌ GPS non supporté par ce navigateur';
-            statusDiv.style.backgroundColor = '#ffebee';
-        }
-    }
-    </script>
-    """
+# ==================== FONCTIONS UTILES ====================
+def exporter_excel(session):
+    output = BytesIO()
+    df_points = pd.DataFrame(session.points)
+    df_resume = pd.DataFrame([{
+        "Agent": session.agent_nom,
+        "Quartier": session.quartier,
+        "Equipe": session.equipe,
+        "Incident": session.incident,
+        "Volume 1": session.volumes["collecte1"],
+        "Volume 2": session.volumes["collecte2"],
+        "Date": date.today()
+    }])
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_resume.to_excel(writer, sheet_name="Résumé", index=False)
+        df_points.to_excel(writer, sheet_name="Points et Horaires", index=False)
+    return output.getvalue()
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
-    st.markdown("### 🗑️ Commune de Mékhé")
-    st.markdown("---")
-    
+    st.session_state.lang = st.selectbox("🌍 Langue / Kàllaama", ["Français", "Wolof"])
+    t = LANGS[st.session_state.lang]
+
+    st.markdown(f"### 🗑️ {t['title']}")
+
     mode = st.radio("🔐 Mode", ["🧑‍🌾 Agent de terrain", "📊 Responsable / Dashboard"])
     
     if mode == "🧑‍🌾 Agent de terrain":
         st.session_state.role = "agent"
         st.markdown("---")
-        st.session_state.agent_nom = st.text_input("✍️ Votre nom", placeholder="Ex: Alioune Diop")
+        st.session_state.agent_nom = st.text_input(t["nom"], value=st.session_state.agent_nom)
         
         st.markdown("---")
-        st.markdown("### 📍 Informations tournée")
-        st.session_state.quartier = st.selectbox("Quartier", ["HLM", "NDIOP", "LEBOU EST", "NGAYE DIAGNE", "MAMBARA", "NGAYE DJITTE", "LEBOU OUEST"])
-        st.session_state.equipe = st.selectbox("Équipe", ["Équipe A", "Équipe B", "Équipe C", "Équipe D"])
-        st.session_state.type_tracteur = st.selectbox("Type tracteur", ["TAFE", "New Holland", "Massey Ferguson", "John Deere"])
-        st.session_state.numero_parc = st.text_input("N° Parc", placeholder="Ex: TR-001")
-        
-        st.markdown("---")
-        st.markdown("### 📡 GPS")
-        
-        # Afficher le composant GPS
-        st.components.v1.html(get_gps_component(), height=150)
-        
-        if st.session_state.gps_obtenu and st.session_state.latitude:
-            st.markdown(f"""
-            <div class="gps-card">
-                📍 <b>Position actuelle</b><br>
-                Latitude: {st.session_state.latitude:.6f}<br>
-                Longitude: {st.session_state.longitude:.6f}
-            </div>
-            """, unsafe_allow_html=True)
-            st.success("✅ GPS prêt !")
-        else:
-            st.warning("⚠️ Cliquez sur 'Obtenir ma position GPS'")
+        st.markdown(f"### {t['info_tournee']}")
+        st.session_state.quartier = st.selectbox(t["quartier"], ["HLM", "NDIOP", "LEBOU EST", "NGAYE DIAGNE", "MAMBARA", "NGAYE DJITTE", "LEBOU OUEST"])
+        st.session_state.equipe = st.selectbox(t["equipe"], ["Équipe A", "Équipe B", "Équipe C", "Équipe D"])
+        st.session_state.type_tracteur = st.selectbox(t["tracteur"], ["TAFE", "New Holland", "Massey Ferguson", "John Deere"])
+        st.session_state.numero_parc = st.text_input(t["n_parc"], value=st.session_state.numero_parc)
         
     else:
         st.session_state.role = "dashboard"
-    
-    st.markdown("---")
-    st.caption("📍 Obtenez votre position GPS avant chaque action")
 
 # ==================== MODE AGENT ====================
 if st.session_state.role == "agent":
     
     st.markdown("""
     <div class="main-header">
-        <h1>🗑️ Agent de Collecte - Mékhé</h1>
-        <p>1. Obtenez votre position GPS | 2. Cliquez sur l'action</p>
+        <h1>🗑️ {t['title']}</h1>
+        <p>{t['gps_help']}</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    if not st.session_state.agent_nom:
-        st.warning("⚠️ Veuillez entrer votre nom dans la barre latérale")
-        st.stop()
-    
+
+    st.markdown(f'<a href="https://www.google.com/maps/search/ma+position" target="_blank" class="gps-button" style="text-decoration:none; display:block; text-align:center;">{t["open_maps"]}</a>', unsafe_allow_html=True)
+
     # Affichage des infos
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.info(f"👤 **Agent:** {st.session_state.agent_nom}")
+        st.info(f"👤 **{t['nom'].split(' ')[1]}:** {st.session_state.agent_nom}")
     with col2:
-        st.info(f"📍 **Quartier:** {st.session_state.quartier}")
+        st.info(f"📍 **{t['quartier']}:** {st.session_state.quartier}")
     with col3:
-        st.info(f"👥 **Équipe:** {st.session_state.equipe}")
-    
+        st.info(f"👥 **{t['equipe']}:** {st.session_state.equipe}")
+
     col1, col2 = st.columns(2)
     with col1:
-        st.info(f"🚜 **Tracteur:** {st.session_state.type_tracteur}")
+        st.info(f"🚜 **{t['tracteur']}:** {st.session_state.type_tracteur}")
     with col2:
-        st.info(f"🔢 **N° Parc:** {st.session_state.numero_parc or 'Non renseigné'}")
-    
-    # Statut GPS
-    if st.session_state.gps_obtenu:
-        st.success(f"📍 GPS prêt")
-    else:
-        st.warning("⚠️ Cliquez sur 'Obtenir ma position GPS' dans la barre latérale")
-    
+        st.info(f"🔢 **{t['n_parc']}:** {st.session_state.numero_parc or '---'}")
+
+    st.markdown("---")
+
+    # ==================== ÉTAPES DE COLLECTE ====================
+    etapes = [
+        ("depart", t["step_depart"]),
+        ("debut_collecte1", t["step_debut1"]),
+        ("fin_collecte1", t["step_fin1"]),
+        ("decharge1", t["step_vidage1"]),
+        ("retour", t["step_retour"])
+    ]
+
+    for code, nom_etape in etapes:
+        with st.expander(nom_etape, expanded=(code not in st.session_state.horaires)):
+            if code in st.session_state.horaires:
+                st.success(f"✅ {t['success_save']} {st.session_state.horaires[code]}")
+                p = next(x for x in st.session_state.points if x["type"] == code)
+                st.caption(f"📍 {p['lat']}, {p['lon']}")
+            else:
+                coords = st.text_input(f"📍 Coordonnées GPS ({nom_etape})", key=f"in_{code}", placeholder="15.11, -16.63")
+                
+                if code == "decharge1":
+                    v1 = st.number_input(f"📦 {t['vol']}", 0.0, 20.0, 0.0, 0.5, key="vol1")
+                    st.session_state.volumes["collecte1"] = v1
+
+                if st.button(t["save"], key=f"btn_{code}"):
+                    if coords:
+                        match = re.search(r"([-+]?\d+\.\d+)\s*,\s*([-+]?\d+\.\d+)", coords)
+                        if match:
+                            now = datetime.now().strftime("%H:%M:%S")
+                            st.session_state.horaires[code] = now
+                            st.session_state.points.append({
+                                "type": code, "titre": nom_etape, "heure": now,
+                                "lat": float(match.group(1)), "lon": float(match.group(2))
+                            })
+                            if code == "fin_collecte1": st.session_state.collecte1_terminee = True
+                            st.rerun()
+                        else:
+                            st.error(t["error_gps"])
+                    else:
+                        st.warning("⚠️ Entrez les coordonnées")
+
     st.markdown("---")
     
-    # ==================== BOUTONS DE COLLECTE ====================
-    st.markdown("### 🎤 Enregistrement de la tournée")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
+    # Incident et Export
+    st.session_state.incident = st.selectbox(t["incident"], t["incidents_list"])
+
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚀 DÉPART", use_container_width=True, type="primary"):
-            trigger_gps_script("depart")
-    
-    with col2:
-        if st.button("🗑️ DÉBUT COLLECTE 1", use_container_width=True):
-            trigger_gps_script("debut_collecte1")
-    
-    with col3:
-        if st.button("🏁 FIN COLLECTE 1", use_container_width=True):
-            trigger_gps_script("fin_collecte1")
-    
-    with col4:
-        if st.button("🚛 VIDAGE 1", use_container_width=True):
-            trigger_gps_script("decharge1")
-    
-    with col5:
-        if st.button("🏁 RETOUR", use_container_width=True):
-            trigger_gps_script("retour")
-    
-    st.markdown("---")
-    
-    # ==================== VOLUME COLLECTE 1 ====================
-    st.markdown("### 📦 Volume collecte 1")
-    v1 = st.number_input("Volume (m³)", 0.0, 20.0, st.session_state.volumes["collecte1"], 0.5, key="vol1")
-    if v1 != st.session_state.volumes["collecte1"]:
-        st.session_state.volumes["collecte1"] = v1
-    
-    if v1 > 0:
-        taux = (v1 / 10) * 100
-        st.progress(min(taux/100, 1.0))
-        st.caption(f"📊 Taux de remplissage : {taux:.0f}% (remorque 10m³)")
-    
-    st.markdown("---")
-    
-    # ==================== COLLECTE 2 OPTIONNELLE ====================
-    if st.session_state.collecte1_terminee and not st.session_state.collecte2_active:
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("➕ ACTIVER COLLECTE 2", use_container_width=True):
-                st.session_state.collecte2_active = True
-                st.success("✅ Collecte 2 activée")
-        with col2:
-            if st.button("⏭️ PASSER COLLECTE 2", use_container_width=True):
-                st.session_state.collecte2_active = True
-                st.info("Collecte 2 ignorée")
-    
-    if st.session_state.collecte2_active and "fin_collecte2" not in st.session_state.horaires:
-        st.markdown("---")
-        st.markdown("## 🚛 COLLECTE 2 (Optionnelle)")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🗑️ DÉBUT COLLECTE 2", use_container_width=True):
-                if not st.session_state.gps_obtenu:
-                    st.error("❌ Obtenez d'abord votre position GPS")
-                else:
-                    current_time = datetime.now().strftime("%H:%M:%S")
-                    st.session_state.horaires["debut_collecte2"] = current_time
-                    st.session_state.points.append({
-                        "type": "debut_collecte2",
-                        "titre": "🗑️ Début collecte 2",
-                        "heure": current_time,
-                        "lat": st.session_state.latitude,
-                        "lon": st.session_state.longitude
-                    })
-                    st.success(f"✅ DÉBUT COLLECTE 2 à {current_time}")
-        
-        with col2:
-            if st.button("🏁 FIN COLLECTE 2", use_container_width=True):
-                if not st.session_state.gps_obtenu:
-                    st.error("❌ Obtenez d'abord votre position GPS")
-                else:
-                    current_time = datetime.now().strftime("%H:%M:%S")
-                    st.session_state.horaires["fin_collecte2"] = current_time
-                    st.session_state.points.append({
-                        "type": "fin_collecte2",
-                        "titre": "🏁 Fin collecte 2",
-                        "heure": current_time,
-                        "lat": st.session_state.latitude,
-                        "lon": st.session_state.longitude
-                    })
-                    st.success(f"✅ FIN COLLECTE 2 à {current_time}")
-        
-        with col3:
-            if st.button("🚛 SECOND VIDAGE", use_container_width=True):
-                if not st.session_state.gps_obtenu:
-                    st.error("❌ Obtenez d'abord votre position GPS")
-                else:
-                    current_time = datetime.now().strftime("%H:%M:%S")
-                    st.session_state.horaires["decharge2"] = current_time
-                    st.session_state.points.append({
-                        "type": "decharge2",
-                        "titre": "🚛 Second vidage",
-                        "heure": current_time,
-                        "lat": st.session_state.latitude,
-                        "lon": st.session_state.longitude
-                    })
-                    st.success(f"✅ SECOND VIDAGE à {current_time}")
-        
-        v2 = st.number_input("📦 Volume collecte 2 (m³)", 0.0, 20.0, st.session_state.volumes["collecte2"], 0.5, key="vol2")
-        if v2 != st.session_state.volumes["collecte2"]:
-            st.session_state.volumes["collecte2"] = v2
-    
-    st.markdown("---")
+        excel_data = exporter_excel(st.session_state)
+        st.download_button(t["export"], excel_data, f"collecte_{date.today()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     
     # ==================== RÉCAPITULATIF ====================
     with st.expander("📋 Voir le récapitulatif"):
@@ -540,48 +350,26 @@ if st.session_state.role == "agent":
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("✅ TERMINER LA TOURNÉE", type="primary", use_container_width=True):
+        if st.button(t["finish"], type="primary", use_container_width=True):
             if not st.session_state.horaires.get("depart"):
                 st.error("❌ Veuillez enregistrer le DÉPART")
             elif st.session_state.volumes["collecte1"] == 0:
                 st.error("❌ Veuillez entrer le volume de la collecte 1")
             else:
-                total_volume = st.session_state.volumes["collecte1"] + st.session_state.volumes["collecte2"]
-                
                 st.balloons()
-                st.success(f"""
-                ✅ **TOURNÉE TERMINÉE AVEC SUCCÈS !**
-                
-                📊 **Récapitulatif final**
-                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                👤 **Agent :** {st.session_state.agent_nom}
-                📍 **Quartier :** {st.session_state.quartier}
-                👥 **Équipe :** {st.session_state.equipe}
-                🚜 **Tracteur :** {st.session_state.type_tracteur} {st.session_state.numero_parc}
-                📦 **Volume total :** {total_volume} m³
-                📍 **Points GPS :** {len(st.session_state.points)}
-                """)
-                
                 # Enregistrement dans la base
                 if engine:
                     try:
                         with engine.connect() as conn:
-                            try:
-                                conn.execute(text("ALTER TABLE tournees ALTER COLUMN quartier_id DROP NOT NULL;"))
-                                conn.execute(text("ALTER TABLE tournees ALTER COLUMN equipe_id DROP NOT NULL;"))
-                                conn.commit()
-                            except:
-                                pass
-                            
                             result = conn.execute(text("""
                                 INSERT INTO tournees (
-                                    date_tournee, agent_nom, quartier_id, equipe_id,
+                                    date_tournee, agent_nom,
                                     volume_collecte1, volume_collecte2,
                                     heure_depot_depart, heure_retour_depot,
                                     heure_debut_collecte1, heure_fin_collecte1,
                                     heure_arrivee_decharge1, statut
                                 ) VALUES (
-                                    :date, :agent, 1, 1,
+                                    :date, :agent,
                                     :vol1, :vol2,
                                     :depart, :retour, :debut1, :fin1, :decharge1, 'termine'
                                 ) RETURNING id
@@ -594,37 +382,34 @@ if st.session_state.role == "agent":
                                 "retour": st.session_state.horaires.get("retour"),
                                 "debut1": st.session_state.horaires.get("debut_collecte1"),
                                 "fin1": st.session_state.horaires.get("fin_collecte1"),
-                                "decharge1": st.session_state.horaires.get("decharge1")
+                                "decharge1": st.session_state.horaires.get("decharge1") or st.session_state.horaires.get("retour")
                             })
                             tournee_id = result.fetchone()[0]
                             
                             for point in st.session_state.points:
-                                if point.get("lat") and point.get("lon"):
-                                    conn.execute(text("""
-                                        INSERT INTO points_arret (tournee_id, type_point, latitude, longitude, heure)
-                                        VALUES (:tid, :type, :lat, :lon, :heure)
-                                    """), {
-                                        "tid": tournee_id,
-                                        "type": point["type"],
-                                        "lat": point["lat"],
-                                        "lon": point["lon"],
-                                        "heure": point["heure"]
-                                    })
+                                conn.execute(text("""
+                                    INSERT INTO points_arret (tournee_id, type_point, latitude, longitude, heure)
+                                    VALUES (:tid, :type, :lat, :lon, :heure)
+                                """), {
+                                    "tid": tournee_id,
+                                    "type": point["type"],
+                                    "lat": point["lat"],
+                                    "lon": point["lon"],
+                                    "heure": point["heure"]
+                                })
                             conn.commit()
-                            st.success("✅ Données enregistrées dans Neon.tech !")
                     except Exception as e:
                         st.warning(f"⚠️ Base: {e}")
                 
+                st.success("✅ Tournée terminée !")
+
                 # Réinitialisation
-                if st.button("🔄 NOUVELLE TOURNÉE", use_container_width=True):
+                if st.button(t["new_tournee"], use_container_width=True):
                     st.session_state.points = []
                     st.session_state.horaires = {}
                     st.session_state.volumes = {"collecte1": 0.0, "collecte2": 0.0}
                     st.session_state.collecte2_active = False
                     st.session_state.collecte1_terminee = False
-                    st.session_state.gps_obtenu = False
-                    st.session_state.latitude = None
-                    st.session_state.longitude = None
                     st.rerun()
 
 # ==================== MODE DASHBOARD ====================
