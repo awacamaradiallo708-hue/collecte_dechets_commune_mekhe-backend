@@ -780,12 +780,14 @@ else:
                             st.warning("⚠️ Dossier 'itinéraire_de_collecte' non trouvé à la racine du projet.")
                         
                         # --- TRACÉ DES PARCOURS RÉELS ---
+                        # Amélioration : lignes plus épaisses (weight=4) et plus opaques (opacity=0.9)
+                        # pour une meilleure visibilité et superposition avec les circuits théoriques
                         # On relie les points GPS enregistrés par les agents pour chaque tournée
                         for tid in points_map['tournee_id'].unique():
                             df_tid = points_map[points_map['tournee_id'] == tid].sort_values('heure')
                             locations = df_tid[['lat', 'lon']].values.tolist()
                             
-                            folium.PolyLine(locations, color="blue", weight=2.5, opacity=0.8, 
+                            folium.PolyLine(locations, color="blue", weight=4, opacity=0.9, 
                                           tooltip=f"Tournée #{tid}").add_to(m)
                             
                         for _, p in points_map.iterrows():
@@ -834,3 +836,4 @@ with st.expander("🛡️ Consignes de sécurité"):
     """)
 
 st.caption(f"📍 GPS via composant HTML | {'Agent: ' + st.session_state.agent_nom if st.session_state.role == 'agent' else 'Dashboard'} | 🗑️ Commune de Mékhé")
+
