@@ -7,6 +7,8 @@ import streamlit as st
 import pandas as pd
 import json
 from datetime import date, datetime
+import smtplib
+from email.mime.text import MIMEText
 from sqlalchemy import create_engine, text
 import folium
 from streamlit_folium import folium_static
@@ -235,6 +237,63 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return R * c
 
+def send_incident_notification(agent_name, quartier, incident_type, date_tournee):
+    """
+    Envoie une notification automatique lorsqu'un incident est signalé.
+    Pour une implémentation réelle, vous devrez configurer un service d'envoi d'e-mails
+    (comme Gmail, SendGrid, Mailgun, etc.) ou un service SMS (Twilio).
+
+    Les informations sensibles (mots de passe, clés API) DOIVENT être stockées
+    dans les secrets Streamlit (st.secrets) ou des variables d'environnement,
+    et NON directement dans le code.
+
+    Exemple d'utilisation de st.secrets:
+    # .streamlit/secrets.toml
+    # EMAIL_SENDER = "votre_email@example.com"
+    # EMAIL_PASSWORD = "votre_mot_de_passe"
+    # EMAIL_RECEIVER = "destinataire@example.com"
+    """
+    subject = f"ALERTE INCIDENT - {incident_type} signalé par {agent_name}"
+    body = f"""
+Bonjour,
+
+Un incident a été signalé lors d'une tournée de collecte :
+
+Agent: {agent_name}
+Quartier: {quartier}
+Type d'incident: {incident_type}
+Date de la tournée: {date_tournee}
+
+Veuillez prendre les mesures nécessaires.
+
+Cordialement,
+Votre système de gestion de collecte
+"""
+
+    # --- SIMULATION DE L'ENVOI (pour démonstration) ---
+    st.warning(f"NOTIFICATION SIMULÉE: Incident '{incident_type}' signalé par {agent_name} dans le quartier {quartier} le {date_tournee}.")
+    st.warning(f"Sujet: {subject}")
+    st.warning(f"Corps: {body}")
+    # --------------------------------------------------
+
+    # --- DÉCOMMENTEZ ET CONFIGUREZ POUR UN ENVOI RÉEL PAR EMAIL ---
+    # try:
+    #     sender_email = st.secrets["EMAIL_SENDER"]
+    #     sender_password = st.secrets["EMAIL_PASSWORD"]
+    #     receiver_email = st.secrets["EMAIL_RECEIVER"] # Ou une liste de destinataires
+    #     msg = MIMEText(body, 'plain', 'utf-8')
+    #     msg['Subject'] = subject
+    #     msg['From'] = sender_email
+    #     msg['To'] = receiver_email
+    #     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp: # Exemple pour Gmail
+    #         smtp.login(sender_email, sender_password)
+    #         smtp.send_message(msg)
+    #     st.success("Notification par e-mail envoyée !")
+    # except KeyError:
+    #     st.error("Erreur: Les secrets d'e-mail (EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER) ne sont pas configurés.")
+    # except Exception as e:
+    #     st.error(f"Erreur lors de l'envoi de la notification par e-mail: {e}")
+
 # ==================== FONCTIONS DE RECHERCHE ID ====================
 def get_quartier_id(nom):
     """Récupère l'ID d'un quartier à partir de son nom."""
@@ -455,6 +514,16 @@ if st.session_state.role == "agent":
             elif st.session_state.volumes["collecte1"] == 0:
                 st.error("❌ Veuillez entrer le volume de la collecte 1")
             else:
+                # Vérifier si l'incident est une "Panne" et envoyer une notification
+                # L'index 2 correspond à "Panne" en Français et "Yàqu" en Wolof dans la liste t["incidents_list"]
+                if st.session_state.incident == t["incidents_list"][2]:
+                    send_incident_notification(
+                        agent_name=st.session_state.agent_nom,
+                        quartier=st.session_state.quartier,
+                        incident_type=st.session_state.incident,
+                        date_tournee=date.today().strftime("%Y-%m-%d")
+                    )
+
                 st.balloons()
                 
                 # Calcul distance totale
