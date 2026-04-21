@@ -282,6 +282,39 @@ if st.session_state.role == "agent":
     
     etapes.append(("retour", t["step_retour"]))
     
+    for code, nom_etape in etapes:
+        with st.expander(nom_etape, expanded=(code not in st.session_state.horaires)):
+            if code in st.session_state.horaires:
+                st.success(f"✅ {t['success_save']} {st.session_state.horaires[code]}")
+                p = next((x for x in st.session_state.points if x["type"] == code), None)
+                if p:
+                    st.caption(f"📍 {p['lat']:.6f}, {p['lon']:.6f}")
+            else:
+                coords = st.text_input(f"📍 Coordonnées GPS ({nom_etape})", key=f"in_{code}", placeholder="15.11, -16.63")
+                
+                if code in ["decharge1", "decharge2"]:
+                    v_key = "vol1" if code == "decharge1" else "vol2"
+                    v_state = "collecte1" if code == "decharge1" else "collecte2"
+                    v1 = st.number_input(f"📦 {t['vol']} ({nom_etape})", 0.0, 30.0, st.session_state.volumes[v_state], 0.5, key=v_key)
+                    st.session_state.volumes[v_state] = v1
+
+                if st.button(t["save"], key=f"btn_{code}"):
+                    if coords:
+                        match = re.search(r"([-+]?\d+\.\d+)\s*,\s*([-+]?\d+\.\d+)", coords)
+                        if match:
+                            now = datetime.now().strftime("%H:%M:%S")
+                            st.session_state.horaires[code] = now
+                            st.session_state.points.append({
+                                "type": code, "titre": nom_etape, "heure": now,
+                                "lat": float(match.group(1)), "lon": float(match.group(2))
+                            })
+                            if code == "fin_collecte1": st.session_state.collecte1_terminee = True
+                            st.rerun()
+                        else:
+                            st.error(t["error_gps"])
+                    else:
+                        st.warning("⚠️ Entrez les coordonnées")
+
     st.markdown("---")
     
     # Incident et Export
@@ -378,10 +411,12 @@ if st.session_state.role == "agent":
                 if engine:
                     try:
                         with engine.connect() as conn:
+                            q_id = get_quartier_id(st.session_state.quartier)
+                            e_id = get_equipe_id(st.session_state.equipe)
                             vol_total = st.session_state.volumes["collecte1"] + st.session_state.volumes["collecte2"]
                             result = conn.execute(text("""
                                 INSERT INTO tournees (
-                                    date_tournee, agent_nom,
+                                    date_tournee, agent_nom, quartier_id, equipe_id,
                                     volume_collecte1, volume_collecte2, volume_m3, distance_parcourue_km,
                                     heure_depot_depart, heure_retour_depot,
                                     heure_debut_collecte1, heure_fin_collecte1,
@@ -389,13 +424,15 @@ if st.session_state.role == "agent":
                                     heure_debut_collecte2, heure_fin_collecte2, heure_arrivee_decharge2,
                                     statut
                                 ) VALUES (
-                                    :date, :agent, 
+                                    :date, :agent, :qid, :eid,
                                     :vol1, :vol2, :vol_t, :dist,
                                     :depart, :retour, :debut1, :fin1, :decharge1, :debut2, :fin2, :decharge2, 'termine'
                                 ) RETURNING id
                             """), {
                                 "date": date.today(),
                                 "agent": st.session_state.agent_nom,
+                                "qid": q_id,
+                                "eid": e_id,
                                 "vol1": st.session_state.volumes["collecte1"],
                                 "vol2": st.session_state.volumes["collecte2"],
                                 "vol_t": vol_total,
